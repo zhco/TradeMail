@@ -38,7 +38,7 @@ class SmtpService {
 
             val message = MimeMessage(session).apply {
                 setFrom(InternetAddress(account.email, account.displayName.ifBlank { account.email }))
-                setRecipients(Message.RecipientType.TO, InternetAddress(to))
+                setRecipients(Message.RecipientType.TO, arrayOf(InternetAddress(to)))
                 setSubject(subject, "UTF-8")
                 if (isHtml) {
                     setContent(body, "text/html; charset=UTF-8")
