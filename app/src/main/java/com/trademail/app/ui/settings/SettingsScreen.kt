@@ -21,6 +21,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     inboxViewModel: InboxViewModel = viewModel()
 ) {
+    val settingsViewModel: SettingsViewModel = viewModel()
     val account by inboxViewModel.account.collectAsState()
 
     var email by remember(account.email) { mutableStateOf(account.email) }
@@ -111,8 +112,7 @@ fun SettingsScreen(
             Button(
                 onClick = {
                     inboxViewModel.deleteAccount()
-                    // 重新保存
-                    viewModel<com.trademail.app.ui.settings.SettingsViewModel>().save(
+                    settingsViewModel.save(
                         com.trademail.app.model.Account(
                             email = email, password = password,
                             imapHost = imapHost, smtpHost = smtpHost
