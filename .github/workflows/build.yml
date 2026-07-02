@@ -4,7 +4,7 @@ on:
   push:
     branches: [main, master]
     tags:
-      - "v*"
+      - v*
   workflow_dispatch:
 
 permissions:
@@ -19,12 +19,12 @@ jobs:
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: "17"
+          java-version: 17
           distribution: temurin
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: "platforms;android-35 build-tools;35.0.0"
+          packages: platforms;android-35 build-tools;35.0.0
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
       - name: Build Release APK
@@ -35,7 +35,7 @@ jobs:
           name: TradeMail-APK
           path: app/build/outputs/apk/release/*.apk
       - name: Create Release
-        if: startsWith(github.ref, "refs/tags/v")
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: app/build/outputs/apk/release/*.apk
