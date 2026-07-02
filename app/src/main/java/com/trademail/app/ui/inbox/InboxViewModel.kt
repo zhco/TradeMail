@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 class InboxViewModel(application: Application) : AndroidViewModel(application) {
-    private val app: TradeMailApp = application as TradeMailApp {
+    private val app: TradeMailApp = application as TradeMailApp
 
     private val _emails = MutableStateFlow<List<Email>>(emptyList())
     val emails: StateFlow<List<Email>> = _emails
