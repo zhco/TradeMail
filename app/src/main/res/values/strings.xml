@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TradeMail</string>
+    <string name="inbox_title">收件箱</string>
+    <string name="compose_title">写邮件</string>
+    <string name="settings_title">设置</string>
+    <string name="model_download_title">下载翻译模型</string>
+    <string name="setup_prompt">请先配置邮箱账户</string>
+    <string name="send">发送</string>
+    <string name="translate_hint">输入中文，发送时自动翻译为英文</string>
+    <string name="model_size">翻译模型约 440MB，下载一次永久使用</string>
+</resources>
