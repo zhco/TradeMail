@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.File
 import java.nio.FloatBuffer
+import java.nio.LongBuffer
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 
@@ -106,7 +107,7 @@ class OfflineTranslator(private val context: Context) {
         // 构造输入 prompt: "<from> <to> <text>"
         val inputText = "$from $to $text"
         val inputIds = simpleTokenize(inputText)
-        val inputTensor = OnnxTensor.createTensor(env, longArrayOf(inputIds.size.toLong(), 1), inputIds)
+        val inputTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(inputIds), longArrayOf(1, inputIds.size.toLong()))
 
         val inputs = mapOf("input_ids" to inputTensor)
         val outputs = session.run(inputs)
@@ -117,7 +118,7 @@ class OfflineTranslator(private val context: Context) {
         // 简单的 detokenize
         val result = simpleDetokenize(outputIds, from, to)
         inputTensor.close()
-        outputs.forEach { it.close() }
+        outputs.close()
         return result
     }
 
