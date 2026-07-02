@@ -1,9 +1,1 @@
-# 保留 Jakarta Mail
--keep class jakarta.mail.** { *; }
--keep class com.sun.mail.** { *; }
-
-# 保留 ONNX Runtime
--keep class ai.onnxruntime.** { *; }
-
-# 保留 DataStore
--keep class androidx.datastore.** { *; }
+# 保留 Jakarta Mail\n-keep class jakarta.mail.** { *; }\n-keep class com.sun.mail.** { *; }\n-keep class javax.security.sasl.** { *; }\n-keep class java.awt.** { *; }\n-keep class javax.activation.** { *; }\n-keep class javax.mail.** { *; }\n\n# 保留 ONNX Runtime\n-keep class ai.onnxruntime.** { *; }\n\n# 保留 DataStore\n-keep class androidx.datastore.** { *; }\n\n# 保留 Coroutines\n-keep class kotlinx.coroutines.** { *; }\n\n# 保留 Room\n-keep class androidx.room.** { *; }\n\n# 保留 Compose\n-keep class androidx.compose.** { *; }\n\n# 保留 ViewModel\n-keep class androidx.lifecycle.** { *; }
