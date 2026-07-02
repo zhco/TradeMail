@@ -1,6 +1,7 @@
 package com.trademail.app.ui.inbox
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.trademail.app.TradeMailApp
 import com.trademail.app.model.Account
@@ -9,7 +10,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-class InboxViewModel(private val app: TradeMailApp) : ViewModel() {
+class InboxViewModel(application: Application) : AndroidViewModel(application) {
+    private val app: TradeMailApp = application as TradeMailApp {
 
     private val _emails = MutableStateFlow<List<Email>>(emptyList())
     val emails: StateFlow<List<Email>> = _emails
