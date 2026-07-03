@@ -8,6 +8,8 @@ import jakarta.mail.internet.MimeMessage
 import jakarta.mail.internet.MimeMultipart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.PrintWriter
+import java.io.StringWriter
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
@@ -49,21 +51,22 @@ class ImapService {
 
                 val inbox = store.getFolder("INBOX")
                 inbox.open(Folder.READ_ONLY)
-
                 val totalMessages = inbox.messageCount
                 val start = maxOf(1, totalMessages - page * pageSize - pageSize + 1)
                 val end = totalMessages - page * pageSize
-
                 val messages = if (start <= end) inbox.getMessages(start, end) else emptyArray()
                 messages.reverse()
-
                 val emails = messages.mapNotNull { msg -> mapToEmail(msg) }
                 inbox.close(false)
                 store.close()
                 Result.success(emails)
             } catch (e: Exception) {
-                e.printStackTrace()
-                Result.failure(e)
+                val sw = StringWriter()
+                e.printStackTrace(PrintWriter(sw))
+                val chain = generateSequence(e) { it.cause }.joinToString(" <- ") { 
+                    "${it.javaClass.simpleName}: ${it.message}" 
+                }
+                Result.failure(RuntimeException("imaps<-$chain\n\n${sw.toString().take(800)}"))
             }
         }
 
@@ -79,9 +82,7 @@ class ImapService {
                 isRead = msg.flags?.contains(Flags.Flag.SEEN) == true,
                 hasAttachments = false
             )
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { null }
     }
 
     private fun getTextContent(part: Part): String {
@@ -100,8 +101,6 @@ class ImapService {
                 }
                 else -> ""
             }
-        } catch (e: Exception) {
-            ""
-        }
+        } catch (e: Exception) { "" }
     }
 }
