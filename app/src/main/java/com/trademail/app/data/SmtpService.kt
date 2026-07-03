@@ -1,12 +1,12 @@
 package com.trademail.app.data
 
 import com.trademail.app.model.Account
-import jakarta.mail.*
-import jakarta.mail.internet.InternetAddress
-import jakarta.mail.internet.MimeMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.*
+import javax.mail.*
+import javax.mail.internet.InternetAddress
+import javax.mail.internet.MimeMessage
 
 /**
  * SMTP 发件服务。
