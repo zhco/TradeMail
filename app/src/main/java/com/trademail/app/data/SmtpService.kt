@@ -1,16 +1,14 @@
 package com.trademail.app.data
 
 import com.trademail.app.model.Account
+import jakarta.mail.*
+import jakarta.mail.internet.InternetAddress
+import jakarta.mail.internet.MimeMessage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.*
-import javax.mail.*
-import javax.mail.internet.InternetAddress
-import javax.mail.internet.MimeMessage
+import javax.net.ssl.SSLSocketFactory
 
-/**
- * SMTP 发件服务。
- */
 class SmtpService {
 
     suspend fun send(
@@ -26,6 +24,7 @@ class SmtpService {
                 put("mail.smtp.port", account.smtpPort.toString())
                 put("mail.smtp.ssl.enable", "true")
                 put("mail.smtp.auth", "true")
+                put("mail.smtp.ssl.socketFactory", SSLSocketFactory.getDefault())
                 put("mail.smtp.connectiontimeout", "10000")
                 put("mail.smtp.timeout", "15000")
             }
