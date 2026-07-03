@@ -76,8 +76,9 @@ dependencies {
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.8.5")
 
-    // Jakarta Mail (IMAP/SMTP)
-    implementation("com.sun.mail:jakarta.mail:2.0.1")
+    // Android Mail (IMAP/SMTP)
+    implementation("com.sun.mail:android-mail:1.6.7")
+    implementation("com.sun.mail:android-activation:1.6.7")
 
     // ONNX Runtime (Hy-MT 离线翻译)
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
