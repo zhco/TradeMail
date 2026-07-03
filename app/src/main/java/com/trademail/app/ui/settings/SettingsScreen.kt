@@ -111,13 +111,14 @@ fun SettingsScreen(
 
             Button(
                 onClick = {
-                    inboxViewModel.deleteAccount()
                     settingsViewModel.save(
                         com.trademail.app.model.Account(
                             email = email, password = password,
                             imapHost = imapHost, smtpHost = smtpHost
                         )
                     )
+                    inboxViewModel.refresh()
+                    onBack()
                 },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = email.isNotBlank() && password.isNotBlank() && imapHost.isNotBlank() && smtpHost.isNotBlank()
