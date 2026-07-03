@@ -6,12 +6,11 @@ import jakarta.mail.*
 import jakarta.mail.internet.InternetAddress
 import jakarta.mail.internet.MimeMessage
 import jakarta.mail.internet.MimeMultipart
-import jakarta.mail.search.FlagTerm
+import jakarta.mail.util.MailSSLSocketFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
-import javax.net.ssl.SSLSocketFactory
 
 class ImapService {
 
@@ -20,13 +19,16 @@ class ImapService {
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
         withContext(Dispatchers.IO) {
             try {
+                val sslFactory = MailSSLSocketFactory()
+                sslFactory.setTrustAllHosts(true)
+
                 val props = Properties().apply {
                     put("mail.imap.host", account.imapHost)
                     put("mail.imap.port", account.imapPort.toString())
                     put("mail.imap.ssl.enable", "true")
-                    put("mail.imap.ssl.socketFactory", SSLSocketFactory.getDefault())
-                    put("mail.imap.connectiontimeout", "10000")
-                    put("mail.imap.timeout", "15000")
+                    put("mail.imap.ssl.socketFactory", sslFactory)
+                    put("mail.imap.connectiontimeout", "15000")
+                    put("mail.imap.timeout", "20000")
                 }
 
                 val session = Session.getInstance(props)
@@ -48,6 +50,7 @@ class ImapService {
                 store.close()
                 Result.success(emails)
             } catch (e: Exception) {
+                e.printStackTrace()
                 Result.failure(e)
             }
         }
