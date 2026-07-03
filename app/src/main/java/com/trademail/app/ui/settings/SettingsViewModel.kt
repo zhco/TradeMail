@@ -2,7 +2,7 @@ package com.trademail.app.ui.settings
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
-import androidz.lifecycle.viewModelScope
+import androidx.lifecycle.viewModelScope
 import com.trademail.app.TradeMailApp
 import com.trademail.app.model.Account
 import kotlinx.coroutines.launch
