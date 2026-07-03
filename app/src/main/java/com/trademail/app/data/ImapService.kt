@@ -6,27 +6,39 @@ import jakarta.mail.*
 import jakarta.mail.internet.InternetAddress
 import jakarta.mail.internet.MimeMessage
 import jakarta.mail.internet.MimeMultipart
-import jakarta.mail.util.MailSSLSocketFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
 import java.util.*
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 class ImapService {
 
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
 
+    private val trustAllFactory by lazy {
+        val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
+            override fun checkClientTrusted(c: Array<X509Certificate>, a: String) {}
+            override fun checkServerTrusted(c: Array<X509Certificate>, a: String) {}
+            override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+        })
+        val ctx = SSLContext.getInstance("TLS")
+        ctx.init(null, trustAll, SecureRandom())
+        ctx.socketFactory
+    }
+
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
         withContext(Dispatchers.IO) {
             try {
-                val sslFactory = MailSSLSocketFactory()
-                sslFactory.setTrustAllHosts(true)
-
                 val props = Properties().apply {
                     put("mail.imap.host", account.imapHost)
                     put("mail.imap.port", account.imapPort.toString())
                     put("mail.imap.ssl.enable", "true")
-                    put("mail.imap.ssl.socketFactory", sslFactory)
+                    put("mail.imap.ssl.socketFactory", trustAllFactory)
                     put("mail.imap.connectiontimeout", "15000")
                     put("mail.imap.timeout", "20000")
                 }
