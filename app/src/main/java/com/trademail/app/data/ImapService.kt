@@ -14,46 +14,41 @@ import javax.mail.internet.MimeMessage
 import javax.mail.internet.MimeMultipart
 import javax.mail.search.FlagTerm
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
-/**
- * IMAP 收件服务。
- * 使用 Android-compatible javax.mail 连接邮箱，拉取收件箱邮件。
- */
 class ImapService {
 
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
 
-    /**
-     * 信任所有 SSL 证书 —— Android 上自签名/企业邮箱常见问题。
-     */
-    private fun trustAllCerts() {
-        val trustAll = object : X509TrustManager {
-            override fun checkClientTrusted(certs: Array<X509Certificate>, authType: String) {}
-            override fun checkServerTrusted(certs: Array<X509Certificate>, authType: String) {}
+    private fun trustAllSocketFactory(): SSLSocketFactory {
+        val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
+            override fun checkClientTrusted(c: Array<X509Certificate>, a: String) {}
+            override fun checkServerTrusted(c: Array<X509Certificate>, a: String) {}
             override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-        }
-        val sc = SSLContext.getInstance("TLS")
-        sc.init(null, arrayOf<TrustManager>(trustAll), SecureRandom())
-        SSLContext.setDefault(sc)
+        })
+        val ctx = SSLContext.getInstance("TLS")
+        ctx.init(null, trustAll, SecureRandom())
+        return ctx.socketFactory
     }
 
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
         withContext(Dispatchers.IO) {
             try {
-                trustAllCerts()
-
+                val sslFactory = trustAllSocketFactory()
                 val props = Properties().apply {
                     put("mail.imap.host", account.imapHost)
                     put("mail.imap.port", account.imapPort.toString())
                     put("mail.imap.ssl.enable", "true")
                     put("mail.imap.ssl.trust", "*")
+                    put("mail.imap.ssl.socketFactory", sslFactory)
                     put("mail.imap.connectiontimeout", "10000")
                     put("mail.imap.timeout", "15000")
                 }
 
                 val session = Session.getInstance(props)
+                session.debug = true
                 val store = session.getStore("imaps")
                 store.connect(account.imapHost, account.email, account.password)
 
@@ -65,20 +60,20 @@ class ImapService {
                 val end = totalMessages - page * pageSize
 
                 val messages = if (start <= end) inbox.getMessages(start, end) else emptyArray()
-                messages.reverse() // 最新的在前
+                messages.reverse()
 
                 val emails = messages.mapNotNull { msg -> mapToEmail(msg) }
                 inbox.close(false)
                 store.close()
                 Result.success(emails)
             } catch (e: Exception) {
+                e.printStackTrace()
                 Result.failure(e)
             }
         }
 
     private fun mapToEmail(msg: Message): Email? {
         return try {
-            val mimeMsg = msg as MimeMessage
             Email(
                 uid = msg.messageNumber.toLong(),
                 from = (msg.from?.firstOrNull() as? InternetAddress)?.address ?: "",
