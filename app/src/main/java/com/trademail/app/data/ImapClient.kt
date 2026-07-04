@@ -140,8 +140,20 @@ class ImapClient {
         val state = ImapState()
 
         try {
-            val greeting = reader.readLine() ?: throw IOException("No IMAP greeting")
-            if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: $greeting")
+            // Read greeting byte-by-byte to avoid readLine buffering issues
+            val greeting = StringBuilder()
+            val buf = CharArray(1)
+            var charsRead = 0
+            while (charsRead < 4096) {
+                val n = reader.read(buf, 0, 1)
+                if (n < 0) break
+                charsRead++
+                greeting.append(buf[0])
+                if (greeting.endsWith("\r\n")) break
+            }
+            val greetingStr = greeting.toString().trim()
+            if (greetingStr.isEmpty()) throw IOException("No IMAP greeting after $charsRead chars")
+            if (!greetingStr.startsWith("* OK")) throw IOException("Bad greeting ($charsRead chars): $greetingStr")
 
             val loginCmd = "LOGIN ${account.email} ${account.password}"
             val loginResp = sendCommand(writer, reader, loginCmd, state)
