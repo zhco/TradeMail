@@ -30,8 +30,8 @@ class ImapClient {
 
     private val client by lazy {
         OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .sslSocketFactory(trustAllSsl.socketFactory, trustAllManager)
             .hostnameVerifier { _, _ -> true }
@@ -131,8 +131,9 @@ class ImapClient {
     private fun fetchViaSocket(account: Account, page: Int, pageSize: Int): List<Email> {
         val socketFactory = trustAllSsl.socketFactory
         val socket = socketFactory.createSocket(account.imapHost, account.imapPort) as SSLSocket
-        socket.soTimeout = 20000
+        socket.soTimeout = 30000
         socket.startHandshake()
+        socket.soTimeout = 30000
 
         val writer = BufferedWriter(OutputStreamWriter(socket.outputStream, Charsets.UTF_8))
         val reader = BufferedReader(InputStreamReader(socket.inputStream, Charsets.UTF_8))
