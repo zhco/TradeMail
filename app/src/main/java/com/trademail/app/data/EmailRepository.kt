@@ -9,12 +9,11 @@ import kotlinx.coroutines.*
  * 邮件仓库，协调 IMAP 拉取 + 自动翻译。
  */
 class EmailRepository(
-    private val imapService: ImapService,
-    private val smtpService: SmtpService,
+    private val imapClient: ImapClient,
     private val translationEngine: TranslationEngine
 ) {
     suspend fun getInbox(account: Account, page: Int = 0): Result<List<Email>> {
-        val result = imapService.fetchInbox(account, page)
+        val result = imapClient.fetchInbox(account, page)
         return result.map { emails ->
             // 自动翻译所有英文邮件
             if (translationEngine.isReady.value) {
@@ -46,7 +45,6 @@ class EmailRepository(
         } else {
             chineseBody
         }
-        return smtpService.send(account, to, subject, englishBody)
     }
 
     suspend fun sendNew(
@@ -66,7 +64,6 @@ class EmailRepository(
         } else {
             subject
         }
-        return smtpService.send(account, to, englishSubject, englishBody)
     }
 
     /**
