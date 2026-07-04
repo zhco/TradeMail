@@ -41,12 +41,15 @@ class ImapService {
                     put("mail.imap.port", account.imapPort.toString())
                     put("mail.imap.ssl.enable", "true")
                     put("mail.imap.ssl.socketFactory", trustAllFactory)
+                    put("mail.imap.socketFactory.fallback", "false")
                     put("mail.imap.connectiontimeout", "15000")
                     put("mail.imap.timeout", "20000")
                 }
 
                 val session = Session.getInstance(props)
-                val store = session.getStore("imaps")
+                // Use "imap" protocol (not "imaps") to avoid NoSuchProviderException on Android
+                // SSL is enabled via mail.imap.ssl.enable=true above
+                val store = session.getStore("imap")
                 store.connect(account.imapHost, account.email, account.password)
 
                 val inbox = store.getFolder("INBOX")
@@ -63,13 +66,12 @@ class ImapService {
             } catch (e: Exception) {
                 val sw = StringWriter()
                 e.printStackTrace(PrintWriter(sw))
-                val chain = generateSequence<Throwable>(e) { it.cause }.joinToString(" <- ") { 
-                    "${it.javaClass.simpleName}: ${it.message}" 
+                val chain = generateSequence<Throwable>(e) { it.cause }.joinToString(" <-") {
+                    "${it.javaClass.simpleName}: ${it.message}"
                 }
-                Result.failure(RuntimeException("imaps<-$chain\n\n${sw.toString().take(800)}"))
+                Result.failure(RuntimeException("imap <-" + chain + "\n\n" + sw.toString().take(800)))
             }
         }
-
     private fun mapToEmail(msg: Message): Email? {
         return try {
             Email(
