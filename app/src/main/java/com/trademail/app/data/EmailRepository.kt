@@ -45,6 +45,7 @@ class EmailRepository(
         } else {
             chineseBody
         }
+        return Result.failure(Exception("SMTP not yet implemented"))
     }
 
     suspend fun sendNew(
@@ -64,6 +65,7 @@ class EmailRepository(
         } else {
             subject
         }
+        return Result.failure(Exception("SMTP not yet implemented"))
     }
 
     /**
