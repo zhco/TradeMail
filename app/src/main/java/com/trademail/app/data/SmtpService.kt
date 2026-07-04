@@ -42,6 +42,7 @@ class SmtpService {
                 put("mail.smtp.ssl.enable", "true")
                 put("mail.smtp.auth", "true")
                 put("mail.smtp.ssl.socketFactory", trustAllFactory)
+                put("mail.smtp.socketFactory.fallback", "false")
                 put("mail.smtp.connectiontimeout", "15000")
                 put("mail.smtp.timeout", "20000")
             }
@@ -61,15 +62,16 @@ class SmtpService {
                 sentDate = Date()
             }
 
+            // Use "smtp" protocol (not "smtps") with SSL enabled via properties
             Transport.send(message)
             Result.success(Unit)
         } catch (e: Exception) {
             val sw = StringWriter()
             e.printStackTrace(PrintWriter(sw))
-            val chain = generateSequence<Throwable>(e) { it.cause }.joinToString(" <- ") {
+            val chain = generateSequence<Throwable>(e) { it.cause }.joinToString(" <-") {
                 "${it.javaClass.simpleName}: ${it.message}"
             }
-            Result.failure(RuntimeException("smtps<-$chain\n\n${sw.toString().take(800)}"))
+            Result.failure(RuntimeException("smtp <-" + chain + "\n\n" + sw.toString().take(800)))
         }
     }
 }
