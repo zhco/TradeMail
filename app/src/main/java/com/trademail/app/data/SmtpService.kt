@@ -66,7 +66,7 @@ class SmtpService {
         } catch (e: Exception) {
             val sw = StringWriter()
             e.printStackTrace(PrintWriter(sw))
-            val chain = generateSequence(e) { it.cause }.joinToString(" <- ") {
+            val chain = generateSequence<Throwable>(e) { it.cause }.joinToString(" <- ") {
                 "${it.javaClass.simpleName}: ${it.message}"
             }
             Result.failure(RuntimeException("smtps<-$chain\n\n${sw.toString().take(800)}"))
