@@ -3,8 +3,8 @@ package com.trademail.app
 import android.app.Application
 import com.trademail.app.data.AccountManager
 import com.trademail.app.data.EmailRepository
-import com.trademail.app.data.ImapService
-import com.trademail.app.data.SmtpService
+import com.trademail.app.data.ImapClient
+
 import com.trademail.app.translate.ModelDownloader
 import com.trademail.app.translate.OfflineTranslator
 import com.trademail.app.translate.TranslationEngine
@@ -28,8 +28,7 @@ class TradeMailApp : Application() {
         translationEngine = TranslationEngine(offlineTranslator)
         modelDownloader = ModelDownloader(this)
         emailRepository = EmailRepository(
-            ImapService(),
-            SmtpService(),
+            ImapClient(),
             translationEngine
         )
 
