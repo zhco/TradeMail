@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import java.io.*
+import java.nio.charset.Charset
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
@@ -96,10 +97,10 @@ class ImapClient {
                 else -> { bytes.write(text[i].code); i++ }
             }
         }
-        return String(bytes.toByteArray(), Charsets.forName(charset))
+        return String(bytes.toByteArray(), Charset.forName(charset))
     }
 
-    private fun charset(name: String) = try { Charsets.forName(name) } catch (_: Exception) { Charsets.UTF_8 }
+    private fun charset(name: String) = try { Charset.forName(name) } catch (_: Exception) { Charsets.UTF_8 }
 
     private val dateFormats = listOf(
         SimpleDateFormat("EEE, d MMM yyyy HH:mm:ss Z", Locale.US),
