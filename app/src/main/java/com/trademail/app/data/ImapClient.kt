@@ -106,21 +106,45 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        // Use system default SSL factory (sohu has valid cert, no trustAll needed)
-        val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
-        val socket = factory.createSocket(account.imapHost, account.imapPort) as SSLSocket
-        socket.soTimeout = 30000
-        socket.tcpNoDelay = true
+        // Connect port 143 + STARTTLS to bypass port 993 blocking
+        val plainSocket = java.net.Socket(account.imapHost, 143)
+        plainSocket.soTimeout = 30000
+        plainSocket.tcpNoDelay = true
         
-        val input = socket.inputStream
-        val output = socket.outputStream
+        var input: InputStream = plainSocket.inputStream
+        var output: OutputStream = plainSocket.outputStream
         val state = ImapState()
 
         try {
-            // Greeting
+            // Read plaintext greeting
             val greeting = readLine(input)
-            if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: $greeting")
+            if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: ${greeting.take(80)}")
 
+            // STARTTLS
+            sendCmd(output, "CAPABILITY", state)
+            readResp(input, state)
+            
+            sendCmd(output, "STARTTLS", state)
+            val stls = readResp(input, state)
+            if (!stls.contains("OK")) throw IOException("STARTTLS refused: ${stls.take(80)}")
+
+            // TLS wrap
+            val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
+            val socket = factory.createSocket(plainSocket, account.imapHost, 143, true) as SSLSocket
+            socket.soTimeout = 30000
+            socket.tcpNoDelay = true
+            input = socket.inputStream
+            output = socket.outputStream
+
+            // Server may not re-send greeting after STARTTLS, send CAPABILITY to sync
+            sendCmd(output, "CAPABILITY", state)
+            readResp(input, state)
+        } catch (e: Exception) {
+            try { plainSocket.close() } catch (_: Exception) {}
+            throw e
+        }
+
+        try {
             // Login
             sendCmd(output, "LOGIN ${account.email} ${account.password}", state)
             val login = readResp(input, state)
@@ -181,7 +205,7 @@ class ImapClient {
             readResp(input, state)
             return emails.reversed()
         } finally {
-            try { socket.close() } catch (_: Exception) {} 
+            try { input.close() } catch (_: Exception) {}
         }
     }
 }
