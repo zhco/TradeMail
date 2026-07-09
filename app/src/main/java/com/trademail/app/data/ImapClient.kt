@@ -4,29 +4,14 @@ import com.trademail.app.model.Account
 import com.trademail.app.model.Email
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import java.io.*
 import java.nio.charset.Charset
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
 import java.util.*
-import java.util.concurrent.TimeUnit
-import javax.net.ssl.*
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 
 class ImapClient {
-
-    private val trustAllManager = object : X509TrustManager {
-        override fun checkClientTrusted(c: Array<X509Certificate>, a: String) {}
-        override fun checkServerTrusted(c: Array<X509Certificate>, a: String) {}
-        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-    }
-
-    private val trustAllSsl by lazy {
-        val ctx = SSLContext.getInstance("TLS")
-        ctx.init(null, arrayOf<TrustManager>(trustAllManager), SecureRandom())
-        ctx
-    }
 
     data class ImapState(var tagIndex: Int = 0)
 
@@ -43,70 +28,55 @@ class ImapClient {
         return String(bytes.toByteArray(), Charsets.UTF_8).trim()
     }
 
-    private fun readFull(input: InputStream, size: Int): ByteArray {
-        val buf = ByteArray(size)
-        var offset = 0
-        while (offset < size) {
-            val n = input.read(buf, offset, size - offset)
-            if (n < 0) break
-            offset += n
-        }
-        return buf
-    }
-
     private fun sendCmd(output: OutputStream, cmd: String, state: ImapState) {
         val tag = "A${state.tagIndex}"
         state.tagIndex++
-        val line = "$tag $cmd\r\n"
-        output.write(line.toByteArray(Charsets.UTF_8))
+        output.write("$tag $cmd\r\n".toByteArray(Charsets.UTF_8))
         output.flush()
     }
 
-    private fun readResponse(input: InputStream, state: ImapState): String {
+    private fun readResp(input: InputStream, state: ImapState): String {
         val sb = StringBuilder()
-        val tagPrefix = "A${state.tagIndex}"
+        val prefix = "A${state.tagIndex}"
         while (true) {
             val line = readLine(input)
             sb.append(line).append("\n")
-            if (line.startsWith(tagPrefix)) break
-            if (line.startsWith("* BYE")) break
+            if (line.startsWith(prefix) || line.startsWith("* BYE")) break
         }
         return sb.toString()
     }
 
     private fun decodeHeader(raw: String): String {
         return try {
-            val regex = Regex("""=\?([^?]+)\?([BbQq])\?([^?]*)\?=""")
-            var lastEnd = 0
-            val decoded = StringBuilder()
-            regex.findAll(raw).forEach { match ->
-                decoded.append(raw.substring(lastEnd, match.range.first))
-                lastEnd = match.range.last + 1
-                val charset = match.groupValues[1]
-                val encoding = match.groupValues[2].uppercase()
-                val text = match.groupValues[3]
-                val cs = try { Charset.forName(charset) } catch (_: Exception) { Charsets.UTF_8 }
-                val decodedPart = when (encoding) {
-                    "B" -> String(Base64.getDecoder().decode(text), cs)
+            val r = Regex("""=\?([^?]+)\?([BbQq])\?([^?]*)\?=""")
+            var last = 0
+            val sb = StringBuilder()
+            r.findAll(raw).forEach { m ->
+                sb.append(raw.substring(last, m.range.first))
+                last = m.range.last + 1
+                val cs = try { Charset.forName(m.groupValues[1]) } catch (_: Exception) { Charsets.UTF_8 }
+                val txt = m.groupValues[3]
+                val part = when (m.groupValues[2].uppercase()) {
+                    "B" -> String(Base64.getDecoder().decode(txt), cs)
                     "Q" -> {
-                        val bbuf = ByteArrayOutputStream()
+                        val bb = ByteArrayOutputStream()
                         var i = 0
-                        while (i < text.length) {
+                        while (i < txt.length) {
                             when {
-                                text[i] == '=' && i + 2 < text.length -> { bbuf.write(text.substring(i + 1, i + 3).toInt(16)); i += 3 }
-                                text[i] == '_' -> { bbuf.write(' '.code); i++ }
-                                else -> { bbuf.write(text[i].code); i++ }
+                                txt[i] == '=' && i + 2 < txt.length -> { bb.write(txt.substring(i + 1, i + 3).toInt(16)); i += 3 }
+                                txt[i] == '_' -> { bb.write(' '.code); i++ }
+                                else -> { bb.write(txt[i].code); i++ }
                             }
                         }
-                        String(bbuf.toByteArray(), cs)
+                        String(bb.toByteArray(), cs)
                     }
-                    else -> text
+                    else -> txt
                 }
-                decoded.append(decodedPart)
+                sb.append(part)
             }
-            decoded.append(raw.substring(lastEnd))
-            decoded.toString()
-        } catch (e: Exception) { raw }
+            sb.append(raw.substring(last))
+            sb.toString()
+        } catch (_: Exception) { raw }
     }
 
     private val dateFormats = listOf(
@@ -115,23 +85,19 @@ class ImapClient {
         SimpleDateFormat("d MMM yyyy HH:mm:ss Z", Locale.US),
     )
 
-    private fun parseDate(dateStr: String): Long {
-        for (fmt in dateFormats) {
-            try { return fmt.parse(dateStr.trim())?.time ?: 0L } catch (_: Exception) {}
-        }
+    private fun parseDate(s: String): Long {
+        for (f in dateFormats) { try { return f.parse(s.trim())?.time ?: 0L } catch (_: Exception) {} }
         return 0L
     }
 
-    private fun findHeader(headers: String, name: String): String {
-        val r = Regex("""$name:\s*(.+)""", RegexOption.IGNORE_CASE)
-        return r.find(headers)?.groupValues?.get(1)?.trim() ?: ""
+    private fun findHdr(h: String, n: String): String {
+        return Regex("""$n:\s*(.+)""", RegexOption.IGNORE_CASE).find(h)?.groupValues?.get(1)?.trim() ?: ""
     }
 
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
         withContext(Dispatchers.IO) {
             try {
-                val emails = fetchViaSocket(account, page, pageSize)
-                Result.success(emails)
+                Result.success(fetch(account, page, pageSize))
             } catch (e: Exception) {
                 val sw = StringWriter()
                 e.printStackTrace(PrintWriter(sw))
@@ -139,99 +105,83 @@ class ImapClient {
             }
         }
 
-    private fun fetchViaSocket(account: Account, page: Int, pageSize: Int): List<Email> {
-        // Connect plain TCP first, then wrap in SSL to avoid Conscrypt timing issues
-        val plainSocket = java.net.Socket(account.imapHost, account.imapPort)
-        plainSocket.soTimeout = 30000
-        val socket = trustAllSsl.socketFactory.createSocket(
-            plainSocket, account.imapHost, account.imapPort, true
-        ) as SSLSocket
+    private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
+        // Use system default SSL factory (sohu has valid cert, no trustAll needed)
+        val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
+        val socket = factory.createSocket(account.imapHost, account.imapPort) as SSLSocket
         socket.soTimeout = 30000
-        // Handshake on first I/O — don't call startHandshake()
+        socket.tcpNoDelay = true
+        
         val input = socket.inputStream
         val output = socket.outputStream
         val state = ImapState()
 
         try {
-            // Read greeting
+            // Greeting
             val greeting = readLine(input)
             if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: $greeting")
 
             // Login
             sendCmd(output, "LOGIN ${account.email} ${account.password}", state)
-            val loginResp = readResponse(input, state)
-            if (!loginResp.contains("OK")) throw IOException("Login failed: ${loginResp.take(200)}")
+            val login = readResp(input, state)
+            if (!login.contains("OK")) throw IOException("Login: ${login.take(200)}")
 
-            // Select INBOX
+            // Select
             sendCmd(output, "SELECT INBOX", state)
-            val selectResp = readResponse(input, state)
-            if (!selectResp.contains("OK")) throw IOException("SELECT failed: ${selectResp.take(200)}")
+            val sel = readResp(input, state)
+            if (!sel.contains("OK")) throw IOException("Select: ${sel.take(200)}")
 
-            val totalMessages = Regex("""\* (\d+) EXISTS""").find(selectResp)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            if (totalMessages == 0) return emptyList()
+            val total = Regex("""\* (\d+) EXISTS""").find(sel)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            if (total == 0) return emptyList()
 
-            val end = totalMessages - page * pageSize
+            val end = total - page * pageSize
             val start = maxOf(1, end - pageSize + 1)
             if (start > end) return emptyList()
 
             // Fetch headers
             sendCmd(output, "FETCH $start:$end (FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])", state)
-            val headerResp = readResponse(input, state)
+            val hdrResp = readResp(input, state)
 
-            val headerBlocks = mutableMapOf<Int, String>()
-            var curSeq = 0
-            val curBlock = StringBuilder()
-            for (line in headerResp.split("\n")) {
+            val hdrBlocks = mutableMapOf<Int, String>()
+            var cs = 0; val cb = StringBuilder()
+            for (line in hdrResp.split("\n")) {
                 val fm = Regex("""\*\s+(\d+)\s+FETCH""").find(line)
                 if (fm != null) {
-                    if (curSeq > 0) headerBlocks[curSeq] = curBlock.toString()
-                    curSeq = fm.groupValues[1].toIntOrNull() ?: 0
-                    curBlock.clear()
-                    curBlock.append(line)
-                } else if (curSeq > 0) {
-                    curBlock.append("\n").append(line)
-                }
+                    if (cs > 0) hdrBlocks[cs] = cb.toString()
+                    cs = fm.groupValues[1].toIntOrNull() ?: 0; cb.clear()
+                    cb.append(line)
+                } else if (cs > 0) cb.append("\n").append(line)
             }
-            if (curSeq > 0) headerBlocks[curSeq] = curBlock.toString()
+            if (cs > 0) hdrBlocks[cs] = cb.toString()
 
             val emails = mutableListOf<Email>()
-            for (seqNum in start..end) {
-                sendCmd(output, "FETCH $seqNum BODY.PEEK[TEXT]", state)
-                val bodyResp = readResponse(input, state)
-                val body = extractLiteral(bodyResp)
+            for (s in start..end) {
+                sendCmd(output, "FETCH $s BODY.PEEK[TEXT]", state)
+                val bodyResp = readResp(input, state)
+                val body = Regex("""\{(\d+)\}""").find(bodyResp)?.let { m ->
+                    val after = bodyResp.substringAfter("}")
+                    val a = if (after.startsWith("\r\n")) after.substring(2) else after
+                    a.take(m.groupValues[1].toIntOrNull() ?: 0)
+                } ?: ""
 
-                val hdr = headerBlocks[seqNum] ?: ""
-                val from = findHeader(hdr, "From")
-                val subject = findHeader(hdr, "Subject")
-                val date = findHeader(hdr, "Date")
-                val seen = hdr.contains("""\Seen""")
-
+                val h = hdrBlocks[s] ?: ""
                 emails.add(Email(
-                    uid = seqNum.toLong(),
-                    from = decodeHeader(from),
-                    subject = decodeHeader(subject).ifBlank { "(无主题)" },
+                    uid = s.toLong(),
+                    from = decodeHeader(findHdr(h, "From")),
+                    subject = decodeHeader(findHdr(h, "Subject")).ifBlank { "(无主题)" },
                     bodyPlain = body.trim(),
                     bodyHtml = "",
-                    receivedDate = parseDate(date),
-                    isRead = seen,
+                    receivedDate = parseDate(findHdr(h, "Date")),
+                    isRead = h.contains("""\Seen"""),
                     hasAttachments = false
                 ))
             }
 
             sendCmd(output, "LOGOUT", state)
-            readResponse(input, state)
+            readResp(input, state)
             return emails.reversed()
         } finally {
-            try { socket.close() } catch (_: Exception) {}
+            try { socket.close() } catch (_: Exception) {} 
         }
-    }
-
-    private fun extractLiteral(resp: String): String {
-        val m = Regex("""\{(\d+)\}""").find(resp) ?: return ""
-        val size = m.groupValues[1].toIntOrNull() ?: return ""
-        val after = resp.substringAfter("}")
-        // Skip \r\n after literal size
-        val content = if (after.startsWith("\r\n")) after.substring(2) else if (after.startsWith("\n")) after.substring(1) else after
-        return content.take(size)
     }
 }
