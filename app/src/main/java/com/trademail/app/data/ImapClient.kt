@@ -5,6 +5,9 @@ import com.trademail.app.model.Email
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.*
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.Socket
 import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.*
@@ -105,30 +108,33 @@ class ImapClient {
             }
         }
 
+    private fun connect(host: String, port: Int): Socket {
+        val addr = InetSocketAddress(host, port)
+        val sock = Socket(Proxy.NO_PROXY)
+        sock.tcpNoDelay = true
+        sock.soTimeout = 30000
+        sock.connect(addr, 10000)
+        return sock
+    }
+
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        // Connect port 143 + STARTTLS to bypass port 993 blocking
-        val plainSocket = java.net.Socket(account.imapHost, 143)
-        plainSocket.soTimeout = 30000
-        plainSocket.tcpNoDelay = true
-        
+        // Connect port 143 + STARTTLS with Proxy.NO_PROXY
+        val plainSocket = connect(account.imapHost, 143)
         var input: InputStream = plainSocket.inputStream
         var output: OutputStream = plainSocket.outputStream
         val state = ImapState()
 
         try {
-            // Read plaintext greeting
             val greeting = readLine(input)
             if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: ${greeting.take(80)}")
 
-            // STARTTLS
             sendCmd(output, "CAPABILITY", state)
             readResp(input, state)
-            
+
             sendCmd(output, "STARTTLS", state)
             val stls = readResp(input, state)
             if (!stls.contains("OK")) throw IOException("STARTTLS refused: ${stls.take(80)}")
 
-            // TLS wrap
             val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
             val socket = factory.createSocket(plainSocket, account.imapHost, 143, true) as SSLSocket
             socket.soTimeout = 30000
@@ -136,7 +142,7 @@ class ImapClient {
             input = socket.inputStream
             output = socket.outputStream
 
-            // Server may not re-send greeting after STARTTLS, send CAPABILITY to sync
+            // Sync after STARTTLS
             sendCmd(output, "CAPABILITY", state)
             readResp(input, state)
         } catch (e: Exception) {
@@ -145,12 +151,10 @@ class ImapClient {
         }
 
         try {
-            // Login
             sendCmd(output, "LOGIN ${account.email} ${account.password}", state)
             val login = readResp(input, state)
             if (!login.contains("OK")) throw IOException("Login: ${login.take(200)}")
 
-            // Select
             sendCmd(output, "SELECT INBOX", state)
             val sel = readResp(input, state)
             if (!sel.contains("OK")) throw IOException("Select: ${sel.take(200)}")
@@ -162,7 +166,6 @@ class ImapClient {
             val start = maxOf(1, end - pageSize + 1)
             if (start > end) return emptyList()
 
-            // Fetch headers
             sendCmd(output, "FETCH $start:$end (FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])", state)
             val hdrResp = readResp(input, state)
 
