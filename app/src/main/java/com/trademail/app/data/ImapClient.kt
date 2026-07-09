@@ -140,12 +140,14 @@ class ImapClient {
         }
 
     private fun fetchViaSocket(account: Account, page: Int, pageSize: Int): List<Email> {
-        val socket = trustAllSsl.socketFactory.createSocket(account.imapHost, account.imapPort) as SSLSocket
+        // Connect plain TCP first, then wrap in SSL to avoid Conscrypt timing issues
+        val plainSocket = java.net.Socket(account.imapHost, account.imapPort)
+        plainSocket.soTimeout = 30000
+        val socket = trustAllSsl.socketFactory.createSocket(
+            plainSocket, account.imapHost, account.imapPort, true
+        ) as SSLSocket
         socket.soTimeout = 30000
-        // Let handshake happen automatically on first I/O
-        socket.startHandshake()
-        socket.soTimeout = 30000
-
+        // Handshake on first I/O — don't call startHandshake()
         val input = socket.inputStream
         val output = socket.outputStream
         val state = ImapState()
