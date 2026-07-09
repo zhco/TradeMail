@@ -5,9 +5,10 @@ import com.trademail.app.model.Email
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.*
+import java.net.InetAddress
 import java.net.InetSocketAddress
-import java.net.Proxy
 import java.net.Socket
+import java.nio.channels.SocketChannel
 import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.*
@@ -108,20 +109,39 @@ class ImapClient {
             }
         }
 
-    private fun connect(host: String, port: Int): Socket {
-        val addr = InetSocketAddress(host, port)
-        val sock = Socket(Proxy.NO_PROXY)
-        sock.tcpNoDelay = true
-        sock.soTimeout = 30000
-        sock.connect(addr, 10000)
-        return sock
+    private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
+        // Resolve DNS manually, try direct IP to bypass DNS interception
+        val ip = try { InetAddress.getByName(account.imapHost).hostAddress ?: account.imapHost }
+            catch (_: Exception) { account.imapHost }
+
+        val lastErr = StringBuilder()
+
+        // Strategy 1: NIO SocketChannel
+        try {
+            return fetchViaSocketChannel(ip, 143, account, page, pageSize)
+        } catch (e: Exception) {
+            lastErr.append("NIO: ${e.javaClass.simpleName}(${e.message?.take(60)}) | ")
+        }
+
+        // Strategy 2: Legacy Socket direct to IP
+        try {
+            return fetchViaSocket(ip, 143, account, page, pageSize)
+        } catch (e: Exception) {
+            lastErr.append("Socket: ${e.javaClass.simpleName}(${e.message?.take(60)})")
+            throw IOException(lastErr.toString())
+        }
     }
 
-    private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        // Connect port 143 + STARTTLS with Proxy.NO_PROXY
-        val plainSocket = connect(account.imapHost, 143)
-        var input: InputStream = plainSocket.inputStream
-        var output: OutputStream = plainSocket.outputStream
+    private fun fetchViaSocketChannel(ip: String, port: Int, account: Account, page: Int, pageSize: Int): List<Email> {
+        val channel = SocketChannel.open()
+        channel.configureBlocking(true)
+        channel.socket().tcpNoDelay = true
+        channel.socket().soTimeout = 30000
+        channel.connect(InetSocketAddress(ip, port))
+
+        var sock: Socket = channel.socket()
+        var input: InputStream = sock.inputStream
+        var output: OutputStream = sock.outputStream
         val state = ImapState()
 
         try {
@@ -136,20 +156,61 @@ class ImapClient {
             if (!stls.contains("OK")) throw IOException("STARTTLS refused: ${stls.take(80)}")
 
             val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
-            val socket = factory.createSocket(plainSocket, account.imapHost, 143, true) as SSLSocket
-            socket.soTimeout = 30000
-            socket.tcpNoDelay = true
-            input = socket.inputStream
-            output = socket.outputStream
+            val sslSock = factory.createSocket(sock, account.imapHost, port, true) as SSLSocket
+            sslSock.soTimeout = 30000
+            sslSock.tcpNoDelay = true
+            input = sslSock.inputStream
+            output = sslSock.outputStream
 
-            // Sync after STARTTLS
             sendCmd(output, "CAPABILITY", state)
             readResp(input, state)
         } catch (e: Exception) {
-            try { plainSocket.close() } catch (_: Exception) {}
+            try { channel.close() } catch (_: Exception) {}
             throw e
         }
 
+        return doFetch(input, output, state, account, page, pageSize)
+    }
+
+    private fun fetchViaSocket(ip: String, port: Int, account: Account, page: Int, pageSize: Int): List<Email> {
+        val sock = Socket()
+        sock.tcpNoDelay = true
+        sock.soTimeout = 30000
+        sock.connect(InetSocketAddress(ip, port), 10000)
+
+        var input: InputStream = sock.inputStream
+        var output: OutputStream = sock.outputStream
+        val state = ImapState()
+
+        try {
+            val greeting = readLine(input)
+            if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: ${greeting.take(80)}")
+
+            sendCmd(output, "CAPABILITY", state)
+            readResp(input, state)
+
+            sendCmd(output, "STARTTLS", state)
+            val stls = readResp(input, state)
+            if (!stls.contains("OK")) throw IOException("STARTTLS refused: ${stls.take(80)}")
+
+            val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
+            val sslSock = factory.createSocket(sock, account.imapHost, port, true) as SSLSocket
+            sslSock.soTimeout = 30000
+            sslSock.tcpNoDelay = true
+            input = sslSock.inputStream
+            output = sslSock.outputStream
+
+            sendCmd(output, "CAPABILITY", state)
+            readResp(input, state)
+        } catch (e: Exception) {
+            try { sock.close() } catch (_: Exception) {}
+            throw e
+        }
+
+        return doFetch(input, output, state, account, page, pageSize)
+    }
+
+    private fun doFetch(input: InputStream, output: OutputStream, state: ImapState, account: Account, page: Int, pageSize: Int): List<Email> {
         try {
             sendCmd(output, "LOGIN ${account.email} ${account.password}", state)
             val login = readResp(input, state)
