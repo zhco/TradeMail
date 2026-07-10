@@ -22,8 +22,8 @@ android {
         applicationId = "com.trademail.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 29
-        versionName = "1.0.27"
+        versionCode = 30
+        versionName = "1.0.29"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
@@ -47,14 +47,6 @@ android {
     buildFeatures {
         compose = true
     }
-
-    packaging {
-        resources {
-            excludes += "META-INF/NOTICE.md"
-            excludes += "META-INF/LICENSE.md"
-            excludes += "META-INF/INDEX.LIST"
-            excludes += "META-INF/DEPENDENCIES"
-        }
     }
 }
 
@@ -77,16 +69,12 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.8.5")
 
     // Jakarta Mail (IMAP/SMTP)
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
-    implementation("org.bouncycastle:bctls-jdk18on:1.78.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // ONNX Runtime (Hy-MT 离线翻译)
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 
     // OkHttp (模型下载)
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
-    implementation("org.bouncycastle:bctls-jdk18on:1.78.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // DataStore (账户配置持久化)
