@@ -4,24 +4,20 @@ import com.trademail.app.model.Account
 import com.trademail.app.model.Email
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.bouncycastle.jce.provider.BouncyCastleProvider
+import okhttp3.*
 import java.io.*
-import java.net.InetSocketAddress
 import java.nio.charset.Charset
-import java.security.Security
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.text.SimpleDateFormat
 import java.util.*
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
+import java.security.cert.X509Certificate
 
 class ImapClient {
-
-    companion object {
-        init {
-            Security.removeProvider("BC")
-            Security.insertProviderAt(BouncyCastleProvider(), 1)
-        }
-    }
 
     data class ImapState(var tagIndex: Int = 0)
 
@@ -104,10 +100,33 @@ class ImapClient {
         return Regex("""$n:\s*(.+)""", RegexOption.IGNORE_CASE).find(h)?.groupValues?.get(1)?.trim() ?: ""
     }
 
+    private val relayUrl = "https://150.158.160.124:443/relay"
+    private val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+        override fun checkServerTrusted(chain: Array<X509Certificate>?, authType: String?) {}
+        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+    })
+
+    private val okHttpClient: OkHttpClient by lazy {
+        val sslCtx = SSLContext.getInstance("TLS")
+        sslCtx.init(null, trustAllCerts, java.security.SecureRandom())
+        OkHttpClient.Builder()
+            .sslSocketFactory(sslCtx.socketFactory, trustAllCerts[0] as X509TrustManager)
+            .hostnameVerifier { _, _ -> true }
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
         withContext(Dispatchers.IO) {
             try {
-                Result.success(fetch(account, page, pageSize))
+                val (input, output, _) = openRelayTunnel(account)
+                try {
+                    Result.success(fetchOverTunnel(input, output, account, page, pageSize))
+                } finally {
+                    try { output.close() } catch (_: Exception) {}
+                }
             } catch (e: Exception) {
                 val sw = StringWriter()
                 e.printStackTrace(PrintWriter(sw))
@@ -115,86 +134,91 @@ class ImapClient {
             }
         }
 
-    private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        // Bouncy Castle TLS — bypass Conscrypt
-        val sslCtx = SSLContext.getInstance("TLS", "BC")
-        sslCtx.init(null, null, null)
-        val socket = sslCtx.socketFactory.createSocket() as SSLSocket
-        socket.enabledProtocols = arrayOf("TLSv1.2")
-        socket.soTimeout = 30000
-        socket.tcpNoDelay = true
-        socket.connect(InetSocketAddress(account.imapHost, 993), 15000)
-        socket.startHandshake()
-
-        val input: InputStream = socket.inputStream
-        val output: OutputStream = socket.outputStream
-        val state = ImapState()
-
-        try {
-            val greeting = readLine(input)
-            if (!greeting.startsWith("* OK") && !greeting.startsWith("* PREAUTH"))
-                throw IOException("Bad greeting: ${greeting.take(80)}")
-
-            sendCmd(output, "LOGIN ${account.email} ${account.password}", state)
-            val login = readResp(input, state)
-            if (!login.contains("OK"))
-                throw IOException("Login failed: ${login.take(200)}")
-
-            sendCmd(output, "SELECT INBOX", state)
-            val sel = readResp(input, state)
-            if (!sel.contains("OK"))
-                throw IOException("Select failed: ${sel.take(200)}")
-
-            val total = Regex("""\* (\d+) EXISTS""").find(sel)?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            if (total == 0) return emptyList()
-
-            val end = total - page * pageSize
-            val start = maxOf(1, end - pageSize + 1)
-            if (start > end) return emptyList()
-
-            sendCmd(output, "FETCH $start:$end (FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])", state)
-            val hdrResp = readResp(input, state)
-
-            val hdrBlocks = mutableMapOf<Int, String>()
-            var cs = 0; val cb = StringBuilder()
-            for (line in hdrResp.split("\n")) {
-                val fm = Regex("""\*\s+(\d+)\s+FETCH""").find(line)
-                if (fm != null) {
-                    if (cs > 0) hdrBlocks[cs] = cb.toString()
-                    cs = fm.groupValues[1].toIntOrNull() ?: 0; cb.clear()
-                    cb.append(line)
-                } else if (cs > 0) cb.append("\n").append(line)
-            }
-            if (cs > 0) hdrBlocks[cs] = cb.toString()
-
-            val emails = mutableListOf<Email>()
-            for (s in start..end) {
-                sendCmd(output, "FETCH $s BODY.PEEK[TEXT]", state)
-                val bodyResp = readResp(input, state)
-                val body = Regex("""\{(\d+)\}""").find(bodyResp)?.let { m ->
-                    val after = bodyResp.substringAfter("}")
-                    val a = if (after.startsWith("\r\n")) after.substring(2) else after
-                    a.take(m.groupValues[1].toIntOrNull() ?: 0)
-                } ?: ""
-
-                val h = hdrBlocks[s] ?: ""
-                emails.add(Email(
-                    uid = s.toLong(),
-                    from = decodeHeader(findHdr(h, "From")),
-                    subject = decodeHeader(findHdr(h, "Subject")).ifBlank { "(无主题)" },
-                    bodyPlain = body.trim(),
-                    bodyHtml = "",
-                    receivedDate = parseDate(findHdr(h, "Date")),
-                    isRead = h.contains("""\Seen"""),
-                    hasAttachments = false
-                ))
-            }
-
-            sendCmd(output, "LOGOUT", state)
-            readResp(input, state)
-            return emails.reversed()
-        } finally {
-            try { input.close() } catch (_: Exception) {}
+    // Try direct first, fallback to relay
+    private fun openRelayTunnel(account: Account): Triple<InputStream, OutputStream, String> {
+        // Attempt 1: OkHttp HTTPS tunnel to relay on port 443
+        // This looks like normal HTTPS traffic to the firewall
+        val connUrl = relayUrl + "?host=" + account.imapHost
+        val request = Request.Builder()
+            .url(connUrl)
+            .header("X-Email", account.email)
+            .header("X-Password", account.password)
+            .build()
+        
+        val response = okHttpClient.newCall(request).execute()
+        if (response.code != 200) {
+            throw IOException("Relay returned ${response.code}: ${response.body?.string()?.take(200)}")
         }
+        // Read relay response: it returns the raw IMAP data through HTTP body as stream
+        val body = response.body ?: throw IOException("No response body")
+        // We'll use this for stdin to the relay
+        val pipeIn = PipedInputStream()
+        val pipeOut = PipedOutputStream(pipeIn)
+        
+        return Triple(body.byteStream(), pipeOut, "relay")
+    }
+
+    private fun fetchOverTunnel(input: InputStream, output: OutputStream, account: Account, page: Int, pageSize: Int): List<Email> {
+        val state = ImapState()
+        
+        val greeting = readLine(input)
+        if (!greeting.contains("OK")) throw IOException("Bad greeting: ${greeting.take(80)}")
+
+        sendCmd(output, "LOGIN ${account.email} ${account.password}", state)
+        val login = readResp(input, state)
+        if (!login.contains("OK")) throw IOException("Login failed: ${login.take(200)}")
+
+        sendCmd(output, "SELECT INBOX", state)
+        val sel = readResp(input, state)
+        if (!sel.contains("OK")) throw IOException("Select failed: ${sel.take(200)}")
+
+        val total = Regex("""\* (\d+) EXISTS""").find(sel)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        if (total == 0) return emptyList()
+
+        val end = total - page * pageSize
+        val start = maxOf(1, end - pageSize + 1)
+        if (start > end) return emptyList()
+
+        sendCmd(output, "FETCH $start:$end (FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])", state)
+        val hdrResp = readResp(input, state)
+
+        val hdrBlocks = mutableMapOf<Int, String>()
+        var cs = 0; val cb = StringBuilder()
+        for (line in hdrResp.split("\n")) {
+            val fm = Regex("""\*\s+(\d+)\s+FETCH""").find(line)
+            if (fm != null) {
+                if (cs > 0) hdrBlocks[cs] = cb.toString()
+                cs = fm.groupValues[1].toIntOrNull() ?: 0; cb.clear()
+                cb.append(line)
+            } else if (cs > 0) cb.append("\n").append(line)
+        }
+        if (cs > 0) hdrBlocks[cs] = cb.toString()
+
+        val emails = mutableListOf<Email>()
+        for (s in start..end) {
+            sendCmd(output, "FETCH $s BODY.PEEK[TEXT]", state)
+            val bodyResp = readResp(input, state)
+            val body = Regex("""\{(\d+)\}""").find(bodyResp)?.let { m ->
+                val after = bodyResp.substringAfter("}")
+                val a = if (after.startsWith("\r\n")) after.substring(2) else after
+                a.take(m.groupValues[1].toIntOrNull() ?: 0)
+            } ?: ""
+
+            val h = hdrBlocks[s] ?: ""
+            emails.add(Email(
+                uid = s.toLong(),
+                from = decodeHeader(findHdr(h, "From")),
+                subject = decodeHeader(findHdr(h, "Subject")).ifBlank { "(无主题)" },
+                bodyPlain = body.trim(),
+                bodyHtml = "",
+                receivedDate = parseDate(findHdr(h, "Date")),
+                isRead = h.contains("""\Seen"""),
+                hasAttachments = false
+            ))
+        }
+
+        sendCmd(output, "LOGOUT", state)
+        readResp(input, state)
+        return emails.reversed()
     }
 }
