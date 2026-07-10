@@ -1,16 +1,16 @@
 package com.trademail.app.data
 
-import android.net.SSLCertificateSocketFactory
 import com.trademail.app.model.Account
 import com.trademail.app.model.Email
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.*
-import java.net.InetSocketAddress
 import java.net.Socket
+import java.net.InetSocketAddress
 import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.*
+import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 
 class ImapClient {
@@ -103,44 +103,45 @@ class ImapClient {
             } catch (e: Exception) {
                 val sw = StringWriter()
                 e.printStackTrace(PrintWriter(sw))
-                Result.failure(RuntimeException("${e.javaClass.simpleName}: ${e.message}\n${sw.toString().take(600)}"))
+                Result.failure(RuntimeException("${e.javaClass.simpleName}: ${e.message}\n${sw.toString().take(800)}"))
             }
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        // Port 993 direct SSL — like SMTP 465, encrypted from the start
-        val plainSocket = Socket()
-        plainSocket.tcpNoDelay = true
-        plainSocket.soTimeout = 30000
-        plainSocket.connect(InetSocketAddress(account.imapHost, 993), 10000)
-
-        // TLS wrap immediately using Android native SSLCertificateSocketFactory
-        val factory = SSLCertificateSocketFactory.getDefault(15000, null)
-        val socket = factory.createSocket(
-            plainSocket, account.imapHost, 993, true
-        ) as SSLSocket
+        // Port 993: one-step connect + handshake via SSLContext
+        val sslCtx = SSLContext.getInstance("TLSv1.2")
+        sslCtx.init(null, null, null)
+        val factory = sslCtx.socketFactory
+        val socket = factory.createSocket() as SSLSocket
         socket.enabledProtocols = arrayOf("TLSv1.2")
         socket.soTimeout = 30000
         socket.tcpNoDelay = true
+        socket.connect(InetSocketAddress(account.imapHost, 993), 15000)
+
+        // TLS handshake
         socket.startHandshake()
 
-        val input = socket.inputStream
-        val output = socket.outputStream
+        val input: InputStream = socket.inputStream
+        val output: OutputStream = socket.outputStream
         val state = ImapState()
 
         try {
-            // Read greeting over TLS
+            // Read IMAP greeting
             val greeting = readLine(input)
-            if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: ${greeting.take(80)}")
+            if (!greeting.startsWith("* OK") && !greeting.startsWith("* PREAUTH"))
+                throw IOException("Bad greeting: ${greeting.take(80)}")
 
-            // LOGIN directly — no STARTTLS needed on 993
+            // LOGIN
             sendCmd(output, "LOGIN ${account.email} ${account.password}", state)
             val login = readResp(input, state)
-            if (!login.contains("OK")) throw IOException("Login: ${login.take(200)}")
+            if (!login.contains("OK"))
+                throw IOException("Login failed: ${login.take(200)}")
 
+            // SELECT INBOX
             sendCmd(output, "SELECT INBOX", state)
             val sel = readResp(input, state)
-            if (!sel.contains("OK")) throw IOException("Select: ${sel.take(200)}")
+            if (!sel.contains("OK"))
+                throw IOException("Select failed: ${sel.take(200)}")
 
             val total = Regex("""\* (\d+) EXISTS""").find(sel)?.groupValues?.get(1)?.toIntOrNull() ?: 0
             if (total == 0) return emptyList()
