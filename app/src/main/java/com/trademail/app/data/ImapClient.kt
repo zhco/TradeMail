@@ -11,7 +11,6 @@ import java.net.Socket
 import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.*
-import javax.net.ssl.SSLSession
 import javax.net.ssl.SSLSocket
 
 class ImapClient {
@@ -109,53 +108,32 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        // Port 143 + STARTTLS using Android's SSLCertificateSocketFactory (like Nodemailer)
+        // Port 993 direct SSL — like SMTP 465, encrypted from the start
         val plainSocket = Socket()
         plainSocket.tcpNoDelay = true
         plainSocket.soTimeout = 30000
-        plainSocket.connect(InetSocketAddress(account.imapHost, 143), 10000)
+        plainSocket.connect(InetSocketAddress(account.imapHost, 993), 10000)
 
-        var input: InputStream = plainSocket.inputStream
-        var output: OutputStream = plainSocket.outputStream
+        // TLS wrap immediately using Android native SSLCertificateSocketFactory
+        val factory = SSLCertificateSocketFactory.getDefault(15000, null)
+        val socket = factory.createSocket(
+            plainSocket, account.imapHost, 993, true
+        ) as SSLSocket
+        socket.enabledProtocols = arrayOf("TLSv1.2")
+        socket.soTimeout = 30000
+        socket.tcpNoDelay = true
+        socket.startHandshake()
+
+        val input = socket.inputStream
+        val output = socket.outputStream
         val state = ImapState()
 
         try {
+            // Read greeting over TLS
             val greeting = readLine(input)
             if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: ${greeting.take(80)}")
 
-            sendCmd(output, "CAPABILITY", state)
-            readResp(input, state)
-
-            sendCmd(output, "STARTTLS", state)
-            val stls = readResp(input, state)
-            if (!stls.contains("OK")) throw IOException("STARTTLS refused: ${stls.take(80)}")
-
-            // Use Android's SSLCertificateSocketFactory (mimics Nodemailer's OpenSSL behavior)
-            val factory = SSLCertificateSocketFactory.getDefault(15000, null)
-            val socket = factory.createSocket(
-                plainSocket, account.imapHost, 143, true
-            ) as SSLSocket
-
-            // Explicit TLS 1.2 only — match what sohu server offers
-            socket.enabledProtocols = arrayOf("TLSv1.2")
-            socket.soTimeout = 30000
-            socket.tcpNoDelay = true
-
-            // Let handshake complete
-            socket.startHandshake()
-
-            input = socket.inputStream
-            output = socket.outputStream
-
-            // Sync after STARTTLS
-            sendCmd(output, "CAPABILITY", state)
-            readResp(input, state)
-        } catch (e: Exception) {
-            try { plainSocket.close() } catch (_: Exception) {}
-            throw e
-        }
-
-        try {
+            // LOGIN directly — no STARTTLS needed on 993
             sendCmd(output, "LOGIN ${account.email} ${account.password}", state)
             val login = readResp(input, state)
             if (!login.contains("OK")) throw IOException("Login: ${login.take(200)}")
