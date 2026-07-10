@@ -4,16 +4,24 @@ import com.trademail.app.model.Account
 import com.trademail.app.model.Email
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 import java.io.*
-import java.net.Socket
 import java.net.InetSocketAddress
 import java.nio.charset.Charset
+import java.security.Security
 import java.text.SimpleDateFormat
 import java.util.*
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
 
 class ImapClient {
+
+    companion object {
+        init {
+            Security.removeProvider("BC")
+            Security.insertProviderAt(BouncyCastleProvider(), 1)
+        }
+    }
 
     data class ImapState(var tagIndex: Int = 0)
 
@@ -108,17 +116,14 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        // Port 993: one-step connect + handshake via SSLContext
-        val sslCtx = SSLContext.getInstance("TLSv1.2")
+        // Bouncy Castle TLS — bypass Conscrypt
+        val sslCtx = SSLContext.getInstance("TLS", "BC")
         sslCtx.init(null, null, null)
-        val factory = sslCtx.socketFactory
-        val socket = factory.createSocket() as SSLSocket
+        val socket = sslCtx.socketFactory.createSocket() as SSLSocket
         socket.enabledProtocols = arrayOf("TLSv1.2")
         socket.soTimeout = 30000
         socket.tcpNoDelay = true
         socket.connect(InetSocketAddress(account.imapHost, 993), 15000)
-
-        // TLS handshake
         socket.startHandshake()
 
         val input: InputStream = socket.inputStream
@@ -126,18 +131,15 @@ class ImapClient {
         val state = ImapState()
 
         try {
-            // Read IMAP greeting
             val greeting = readLine(input)
             if (!greeting.startsWith("* OK") && !greeting.startsWith("* PREAUTH"))
                 throw IOException("Bad greeting: ${greeting.take(80)}")
 
-            // LOGIN
             sendCmd(output, "LOGIN ${account.email} ${account.password}", state)
             val login = readResp(input, state)
             if (!login.contains("OK"))
                 throw IOException("Login failed: ${login.take(200)}")
 
-            // SELECT INBOX
             sendCmd(output, "SELECT INBOX", state)
             val sel = readResp(input, state)
             if (!sel.contains("OK"))
