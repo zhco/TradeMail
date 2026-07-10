@@ -1,59 +1,52 @@
 package com.trademail.app.data
 
+import android.net.SSLCertificateSocketFactory
 import com.trademail.app.model.Account
 import com.trademail.app.model.Email
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 import java.io.*
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.nio.charset.Charset
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
 import java.util.*
-import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
+import javax.net.ssl.SSLSession
+import javax.net.ssl.SSLSocket
 
 class ImapClient {
 
-    companion object {
-        private const val RELAY_BASE = "https://150.158.160.124:8443"
+    data class ImapState(var tagIndex: Int = 0)
 
-        private val unsafeClient: OkHttpClient by lazy {
-            val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
-                override fun checkClientTrusted(c: Array<X509Certificate>?, a: String?) {}
-                override fun checkServerTrusted(c: Array<X509Certificate>?, a: String?) {}
-                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-            })
-            val sslCtx = SSLContext.getInstance("TLS")
-            sslCtx.init(null, trustAll, SecureRandom())
-
-            OkHttpClient.Builder()
-                .sslSocketFactory(sslCtx.socketFactory, trustAll[0] as X509TrustManager)
-                .hostnameVerifier { _, _ -> true }
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .readTimeout(30, TimeUnit.SECONDS)
-                .writeTimeout(15, TimeUnit.SECONDS)
-                .build()
+    private fun readLine(input: InputStream): String {
+        val bytes = ByteArrayOutputStream()
+        var prev = 0
+        while (true) {
+            val b = input.read()
+            if (b < 0) break
+            bytes.write(b)
+            if (prev == '\r'.code && b == '\n'.code) break
+            prev = b
         }
+        return String(bytes.toByteArray(), Charsets.UTF_8).trim()
     }
 
-    private val JSON = "application/json; charset=utf-8".toMediaType()
+    private fun sendCmd(output: OutputStream, cmd: String, state: ImapState) {
+        val tag = "A${state.tagIndex}"
+        state.tagIndex++
+        output.write("$tag $cmd\r\n".toByteArray(Charsets.UTF_8))
+        output.flush()
+    }
 
-    data class RelaySession(val id: String)
-
-    private fun post(path: String, body: String): String {
-        val req = Request.Builder()
-            .url("$RELAY_BASE$path")
-            .post(body.toRequestBody(JSON))
-            .build()
-        val resp = unsafeClient.newCall(req).execute()
-        return resp.body?.string() ?: "{}"
+    private fun readResp(input: InputStream, state: ImapState): String {
+        val sb = StringBuilder()
+        val prefix = "A${state.tagIndex}"
+        while (true) {
+            val line = readLine(input)
+            sb.append(line).append("\n")
+            if (line.startsWith(prefix) || line.startsWith("* BYE")) break
+        }
+        return sb.toString()
     }
 
     private fun decodeHeader(raw: String): String {
@@ -104,24 +97,6 @@ class ImapClient {
         return Regex("""$n:\s*(.+)""", RegexOption.IGNORE_CASE).find(h)?.groupValues?.get(1)?.trim() ?: ""
     }
 
-    private var tagIdx = 0
-    private fun nextTag(): String = "A${tagIdx++}"
-
-    private fun relayCmd(session: String, cmd: String): String {
-        val j = JSONObject(post("/cmd", JSONObject().apply {
-            put("session", session)
-            put("command", cmd)
-        }.toString()))
-        if (!j.optBoolean("ok")) throw IOException("Relay error: ${j.optString("error")}")
-        return j.getString("response")
-    }
-
-    private fun batchCmds(session: String, cmds: List<String>): List<String> {
-        val all = StringBuilder()
-        cmds.forEach { relayCmd(session, it).also { r -> all.append(r) } }
-        return listOf(all.toString())
-    }
-
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
         withContext(Dispatchers.IO) {
             try {
@@ -134,45 +109,70 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        tagIdx = 0
+        // Port 143 + STARTTLS using Android's SSLCertificateSocketFactory (like Nodemailer)
+        val plainSocket = Socket()
+        plainSocket.tcpNoDelay = true
+        plainSocket.soTimeout = 30000
+        plainSocket.connect(InetSocketAddress(account.imapHost, 143), 10000)
 
-        // Connect
-        val cj = JSONObject(post("/connect", "{}"))
-        if (!cj.optBoolean("ok")) throw IOException("Connect: ${cj.optString("error")}")
-        val session = cj.getString("session")
-        val greeting = cj.getString("greeting")
-        if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: ${greeting.take(80)}")
+        var input: InputStream = plainSocket.inputStream
+        var output: OutputStream = plainSocket.outputStream
+        val state = ImapState()
 
         try {
-            // CAPABILITY + STARTTLS
-            relayCmd(session, nextTag() + " CAPABILITY")
-            val stlsResp = relayCmd(session, nextTag() + " STARTTLS")
-            if (!stlsResp.contains("OK")) throw IOException("STARTTLS: ${stlsResp.take(80)}")
+            val greeting = readLine(input)
+            if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: ${greeting.take(80)}")
 
-            // TLS upgrade
-            val tj = JSONObject(post("/starttls", JSONObject().apply {
-                put("session", session)
-            }.toString()))
-            if (!tj.optBoolean("ok", false)) throw IOException("TLS: ${tj.optString("error")}")
-            tagIdx = 0 // reset after TLS
+            sendCmd(output, "CAPABILITY", state)
+            readResp(input, state)
 
-            // LOGIN
-            val loginResp = relayCmd(session, nextTag() + " LOGIN ${account.email} ${account.password}")
-            if (!loginResp.contains("OK")) throw IOException("Login: ${loginResp.take(200)}")
+            sendCmd(output, "STARTTLS", state)
+            val stls = readResp(input, state)
+            if (!stls.contains("OK")) throw IOException("STARTTLS refused: ${stls.take(80)}")
 
-            // SELECT
-            val selResp = relayCmd(session, nextTag() + " SELECT INBOX")
-            if (!selResp.contains("OK")) throw IOException("Select: ${selResp.take(200)}")
+            // Use Android's SSLCertificateSocketFactory (mimics Nodemailer's OpenSSL behavior)
+            val factory = SSLCertificateSocketFactory.getDefault(15000, null)
+            val socket = factory.createSocket(
+                plainSocket, account.imapHost, 143, true
+            ) as SSLSocket
 
-            val total = Regex("""\* (\d+) EXISTS""").find(selResp)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            // Explicit TLS 1.2 only — match what sohu server offers
+            socket.enabledProtocols = arrayOf("TLSv1.2")
+            socket.soTimeout = 30000
+            socket.tcpNoDelay = true
+
+            // Let handshake complete
+            socket.startHandshake()
+
+            input = socket.inputStream
+            output = socket.outputStream
+
+            // Sync after STARTTLS
+            sendCmd(output, "CAPABILITY", state)
+            readResp(input, state)
+        } catch (e: Exception) {
+            try { plainSocket.close() } catch (_: Exception) {}
+            throw e
+        }
+
+        try {
+            sendCmd(output, "LOGIN ${account.email} ${account.password}", state)
+            val login = readResp(input, state)
+            if (!login.contains("OK")) throw IOException("Login: ${login.take(200)}")
+
+            sendCmd(output, "SELECT INBOX", state)
+            val sel = readResp(input, state)
+            if (!sel.contains("OK")) throw IOException("Select: ${sel.take(200)}")
+
+            val total = Regex("""\* (\d+) EXISTS""").find(sel)?.groupValues?.get(1)?.toIntOrNull() ?: 0
             if (total == 0) return emptyList()
 
             val end = total - page * pageSize
             val start = maxOf(1, end - pageSize + 1)
             if (start > end) return emptyList()
 
-            // FETCH headers
-            val hdrResp = relayCmd(session, nextTag() + " FETCH $start:$end (FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])")
+            sendCmd(output, "FETCH $start:$end (FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])", state)
+            val hdrResp = readResp(input, state)
 
             val hdrBlocks = mutableMapOf<Int, String>()
             var cs = 0; val cb = StringBuilder()
@@ -188,7 +188,8 @@ class ImapClient {
 
             val emails = mutableListOf<Email>()
             for (s in start..end) {
-                val bodyResp = relayCmd(session, nextTag() + " FETCH $s BODY.PEEK[TEXT]")
+                sendCmd(output, "FETCH $s BODY.PEEK[TEXT]", state)
+                val bodyResp = readResp(input, state)
                 val body = Regex("""\{(\d+)\}""").find(bodyResp)?.let { m ->
                     val after = bodyResp.substringAfter("}")
                     val a = if (after.startsWith("\r\n")) after.substring(2) else after
@@ -208,13 +209,11 @@ class ImapClient {
                 ))
             }
 
-            // LOGOUT
-            relayCmd(session, nextTag() + " LOGOUT")
-
+            sendCmd(output, "LOGOUT", state)
+            readResp(input, state)
             return emails.reversed()
         } finally {
-            // Close session
-            try { post("/close", JSONObject().apply { put("session", session) }.toString()) } catch (_: Exception) {}
+            try { input.close() } catch (_: Exception) {}
         }
     }
 }
