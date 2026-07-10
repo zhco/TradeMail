@@ -4,50 +4,56 @@ import com.trademail.app.model.Account
 import com.trademail.app.model.Email
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import java.io.*
-import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.net.Socket
-import java.nio.channels.SocketChannel
 import java.nio.charset.Charset
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.text.SimpleDateFormat
 import java.util.*
-import javax.net.ssl.SSLSocket
-import javax.net.ssl.SSLSocketFactory
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 class ImapClient {
 
-    data class ImapState(var tagIndex: Int = 0)
+    companion object {
+        private const val RELAY_BASE = "https://150.158.160.124:8443"
 
-    private fun readLine(input: InputStream): String {
-        val bytes = ByteArrayOutputStream()
-        var prev = 0
-        while (true) {
-            val b = input.read()
-            if (b < 0) break
-            bytes.write(b)
-            if (prev == '\r'.code && b == '\n'.code) break
-            prev = b
+        private val unsafeClient: OkHttpClient by lazy {
+            val trustAll = arrayOf<TrustManager>(object : X509TrustManager {
+                override fun checkClientTrusted(c: Array<X509Certificate>?, a: String?) {}
+                override fun checkServerTrusted(c: Array<X509Certificate>?, a: String?) {}
+                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+            })
+            val sslCtx = SSLContext.getInstance("TLS")
+            sslCtx.init(null, trustAll, SecureRandom())
+
+            OkHttpClient.Builder()
+                .sslSocketFactory(sslCtx.socketFactory, trustAll[0] as X509TrustManager)
+                .hostnameVerifier { _, _ -> true }
+                .connectTimeout(15, TimeUnit.SECONDS)
+                .readTimeout(30, TimeUnit.SECONDS)
+                .writeTimeout(15, TimeUnit.SECONDS)
+                .build()
         }
-        return String(bytes.toByteArray(), Charsets.UTF_8).trim()
     }
 
-    private fun sendCmd(output: OutputStream, cmd: String, state: ImapState) {
-        val tag = "A${state.tagIndex}"
-        state.tagIndex++
-        output.write("$tag $cmd\r\n".toByteArray(Charsets.UTF_8))
-        output.flush()
-    }
+    private val JSON = "application/json; charset=utf-8".toMediaType()
 
-    private fun readResp(input: InputStream, state: ImapState): String {
-        val sb = StringBuilder()
-        val prefix = "A${state.tagIndex}"
-        while (true) {
-            val line = readLine(input)
-            sb.append(line).append("\n")
-            if (line.startsWith(prefix) || line.startsWith("* BYE")) break
-        }
-        return sb.toString()
+    data class RelaySession(val id: String)
+
+    private fun post(path: String, body: String): String {
+        val req = Request.Builder()
+            .url("$RELAY_BASE$path")
+            .post(body.toRequestBody(JSON))
+            .build()
+        val resp = unsafeClient.newCall(req).execute()
+        return resp.body?.string() ?: "{}"
     }
 
     private fun decodeHeader(raw: String): String {
@@ -98,6 +104,24 @@ class ImapClient {
         return Regex("""$n:\s*(.+)""", RegexOption.IGNORE_CASE).find(h)?.groupValues?.get(1)?.trim() ?: ""
     }
 
+    private var tagIdx = 0
+    private fun nextTag(): String = "A${tagIdx++}"
+
+    private fun relayCmd(session: String, cmd: String): String {
+        val j = JSONObject(post("/cmd", JSONObject().apply {
+            put("session", session)
+            put("command", cmd)
+        }.toString()))
+        if (!j.optBoolean("ok")) throw IOException("Relay error: ${j.optString("error")}")
+        return j.getString("response")
+    }
+
+    private fun batchCmds(session: String, cmds: List<String>): List<String> {
+        val all = StringBuilder()
+        cmds.forEach { relayCmd(session, it).also { r -> all.append(r) } }
+        return listOf(all.toString())
+    }
+
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
         withContext(Dispatchers.IO) {
             try {
@@ -110,125 +134,45 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        // Resolve DNS manually, try direct IP to bypass DNS interception
-        val ip = try { InetAddress.getByName(account.imapHost).hostAddress ?: account.imapHost }
-            catch (_: Exception) { account.imapHost }
+        tagIdx = 0
 
-        val lastErr = StringBuilder()
-
-        // Strategy 1: NIO SocketChannel
-        try {
-            return fetchViaSocketChannel(ip, 143, account, page, pageSize)
-        } catch (e: Exception) {
-            lastErr.append("NIO: ${e.javaClass.simpleName}(${e.message?.take(60)}) | ")
-        }
-
-        // Strategy 2: Legacy Socket direct to IP
-        try {
-            return fetchViaSocket(ip, 143, account, page, pageSize)
-        } catch (e: Exception) {
-            lastErr.append("Socket: ${e.javaClass.simpleName}(${e.message?.take(60)})")
-            throw IOException(lastErr.toString())
-        }
-    }
-
-    private fun fetchViaSocketChannel(ip: String, port: Int, account: Account, page: Int, pageSize: Int): List<Email> {
-        val channel = SocketChannel.open()
-        channel.configureBlocking(true)
-        channel.socket().tcpNoDelay = true
-        channel.socket().soTimeout = 30000
-        channel.connect(InetSocketAddress(ip, port))
-
-        var sock: Socket = channel.socket()
-        var input: InputStream = sock.inputStream
-        var output: OutputStream = sock.outputStream
-        val state = ImapState()
+        // Connect
+        val cj = JSONObject(post("/connect", "{}"))
+        if (!cj.optBoolean("ok")) throw IOException("Connect: ${cj.optString("error")}")
+        val session = cj.getString("session")
+        val greeting = cj.getString("greeting")
+        if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: ${greeting.take(80)}")
 
         try {
-            val greeting = readLine(input)
-            if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: ${greeting.take(80)}")
+            // CAPABILITY + STARTTLS
+            relayCmd(session, nextTag() + " CAPABILITY")
+            val stlsResp = relayCmd(session, nextTag() + " STARTTLS")
+            if (!stlsResp.contains("OK")) throw IOException("STARTTLS: ${stlsResp.take(80)}")
 
-            sendCmd(output, "CAPABILITY", state)
-            readResp(input, state)
+            // TLS upgrade
+            val tj = JSONObject(post("/starttls", JSONObject().apply {
+                put("session", session)
+            }.toString()))
+            if (!tj.optBoolean("ok", false)) throw IOException("TLS: ${tj.optString("error")}")
+            tagIdx = 0 // reset after TLS
 
-            sendCmd(output, "STARTTLS", state)
-            val stls = readResp(input, state)
-            if (!stls.contains("OK")) throw IOException("STARTTLS refused: ${stls.take(80)}")
+            // LOGIN
+            val loginResp = relayCmd(session, nextTag() + " LOGIN ${account.email} ${account.password}")
+            if (!loginResp.contains("OK")) throw IOException("Login: ${loginResp.take(200)}")
 
-            val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
-            val sslSock = factory.createSocket(sock, account.imapHost, port, true) as SSLSocket
-            sslSock.soTimeout = 30000
-            sslSock.tcpNoDelay = true
-            input = sslSock.inputStream
-            output = sslSock.outputStream
+            // SELECT
+            val selResp = relayCmd(session, nextTag() + " SELECT INBOX")
+            if (!selResp.contains("OK")) throw IOException("Select: ${selResp.take(200)}")
 
-            sendCmd(output, "CAPABILITY", state)
-            readResp(input, state)
-        } catch (e: Exception) {
-            try { channel.close() } catch (_: Exception) {}
-            throw e
-        }
-
-        return doFetch(input, output, state, account, page, pageSize)
-    }
-
-    private fun fetchViaSocket(ip: String, port: Int, account: Account, page: Int, pageSize: Int): List<Email> {
-        val sock = Socket()
-        sock.tcpNoDelay = true
-        sock.soTimeout = 30000
-        sock.connect(InetSocketAddress(ip, port), 10000)
-
-        var input: InputStream = sock.inputStream
-        var output: OutputStream = sock.outputStream
-        val state = ImapState()
-
-        try {
-            val greeting = readLine(input)
-            if (!greeting.startsWith("* OK")) throw IOException("Bad greeting: ${greeting.take(80)}")
-
-            sendCmd(output, "CAPABILITY", state)
-            readResp(input, state)
-
-            sendCmd(output, "STARTTLS", state)
-            val stls = readResp(input, state)
-            if (!stls.contains("OK")) throw IOException("STARTTLS refused: ${stls.take(80)}")
-
-            val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
-            val sslSock = factory.createSocket(sock, account.imapHost, port, true) as SSLSocket
-            sslSock.soTimeout = 30000
-            sslSock.tcpNoDelay = true
-            input = sslSock.inputStream
-            output = sslSock.outputStream
-
-            sendCmd(output, "CAPABILITY", state)
-            readResp(input, state)
-        } catch (e: Exception) {
-            try { sock.close() } catch (_: Exception) {}
-            throw e
-        }
-
-        return doFetch(input, output, state, account, page, pageSize)
-    }
-
-    private fun doFetch(input: InputStream, output: OutputStream, state: ImapState, account: Account, page: Int, pageSize: Int): List<Email> {
-        try {
-            sendCmd(output, "LOGIN ${account.email} ${account.password}", state)
-            val login = readResp(input, state)
-            if (!login.contains("OK")) throw IOException("Login: ${login.take(200)}")
-
-            sendCmd(output, "SELECT INBOX", state)
-            val sel = readResp(input, state)
-            if (!sel.contains("OK")) throw IOException("Select: ${sel.take(200)}")
-
-            val total = Regex("""\* (\d+) EXISTS""").find(sel)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            val total = Regex("""\* (\d+) EXISTS""").find(selResp)?.groupValues?.get(1)?.toIntOrNull() ?: 0
             if (total == 0) return emptyList()
 
             val end = total - page * pageSize
             val start = maxOf(1, end - pageSize + 1)
             if (start > end) return emptyList()
 
-            sendCmd(output, "FETCH $start:$end (FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])", state)
-            val hdrResp = readResp(input, state)
+            // FETCH headers
+            val hdrResp = relayCmd(session, nextTag() + " FETCH $start:$end (FLAGS BODY.PEEK[HEADER.FIELDS (SUBJECT FROM DATE)])")
 
             val hdrBlocks = mutableMapOf<Int, String>()
             var cs = 0; val cb = StringBuilder()
@@ -244,8 +188,7 @@ class ImapClient {
 
             val emails = mutableListOf<Email>()
             for (s in start..end) {
-                sendCmd(output, "FETCH $s BODY.PEEK[TEXT]", state)
-                val bodyResp = readResp(input, state)
+                val bodyResp = relayCmd(session, nextTag() + " FETCH $s BODY.PEEK[TEXT]")
                 val body = Regex("""\{(\d+)\}""").find(bodyResp)?.let { m ->
                     val after = bodyResp.substringAfter("}")
                     val a = if (after.startsWith("\r\n")) after.substring(2) else after
@@ -265,11 +208,13 @@ class ImapClient {
                 ))
             }
 
-            sendCmd(output, "LOGOUT", state)
-            readResp(input, state)
+            // LOGOUT
+            relayCmd(session, nextTag() + " LOGOUT")
+
             return emails.reversed()
         } finally {
-            try { input.close() } catch (_: Exception) {}
+            // Close session
+            try { post("/close", JSONObject().apply { put("session", session) }.toString()) } catch (_: Exception) {}
         }
     }
 }
