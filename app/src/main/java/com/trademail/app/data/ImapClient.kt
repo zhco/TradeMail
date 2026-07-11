@@ -2,25 +2,15 @@ package com.trademail.app.data
 
 import com.trademail.app.model.Account
 import com.trademail.app.model.Email
+import jakarta.mail.*
+import jakarta.mail.search.FlagTerm
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.*
-import org.json.JSONObject
 import java.io.StringWriter
 import java.io.PrintWriter
-import java.util.concurrent.TimeUnit
+import java.util.*
 
 class ImapClient {
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
-        .build()
-
-    companion object {
-        const val PROXY_URL = "https://你部署后填入.supabase.co/functions/v1/imap-proxy"
-    }
 
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
         withContext(Dispatchers.IO) {
@@ -34,43 +24,60 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        val body = JSONObject().apply {
-            put("action", "fetch_inbox")
-            put("host", account.imapHost)
-            put("port", 993)
-            put("user", account.email)
-            put("pass", account.password)
-            put("page", page)
-            put("pageSize", pageSize)
+        val props = Properties().apply {
+            put("mail.imap.ssl.enable", "true")
+            put("mail.imap.host", account.imapHost)
+            put("mail.imap.port", "993")
+            put("mail.imap.connectiontimeout", "15000")
+            put("mail.imap.timeout", "30000")
+            put("mail.imap.socketFactory.class", "javax.net.ssl.SSLSocketFactory")
+            put("mail.imap.socketFactory.fallback", "false")
+            put("mail.imap.socketFactory.port", "993")
         }
 
-        val req = Request.Builder()
-            .url(PROXY_URL)
-            .header("Authorization", "Bearer supabase_anon_key")
-            .post(RequestBody.create(MediaType.parse("application/json"), body.toString()))
-            .build()
+        val session = Session.getInstance(props, null)
+        session.debug = false
 
-        val resp = client.newCall(req).execute()
-        if (!resp.isSuccessful) throw RuntimeException("HTTP ${resp.code}: ${resp.body?.string()?.take(200)}")
+        val store = session.getStore("imaps")
+        store.connect(account.email, account.password)
+        store.use { s ->
+            val inbox = s.getFolder("INBOX").apply { open(Folder.READ_ONLY) }
+            inbox.use { f ->
+                val total = f.messageCount
+                if (total == 0) return emptyList()
 
-        val json = JSONObject(resp.body?.string() ?: "{}")
-        if (!json.optBoolean("ok", false)) throw RuntimeException(json.optString("error", "unknown"))
+                val end = total - page * pageSize
+                val start = maxOf(1, end - pageSize + 1)
+                if (start > end) return emptyList()
 
-        val arr = json.getJSONArray("emails")
-        val emails = mutableListOf<Email>()
-        for (i in 0 until arr.length()) {
-            val e = arr.getJSONObject(i)
-            emails.add(Email(
-                uid = e.optLong("uid", 0),
-                from = e.optString("from", ""),
-                subject = e.optString("subject", "(无主题)"),
-                bodyPlain = e.optString("bodyPlain", ""),
-                bodyHtml = e.optString("bodyHtml", ""),
-                receivedDate = e.optLong("receivedDate", 0),
-                isRead = e.optBoolean("isRead", false),
-                hasAttachments = e.optBoolean("hasAttachments", false)
-            ))
+                val msgs = f.getMessages(start, end)
+                f.fetch(msgs, arrayOf(
+                    FetchProfile.Item.FLAGS,
+                    FetchProfile.Item.ENVELOPE,
+                    FetchProfile.Item.CONTENT_INFO
+                ))
+
+                val emails = mutableListOf<Email>()
+                for (msg in msgs.reversed()) {
+                    try {
+                        val body = try {
+                            msg.content?.toString()?.take(2000) ?: ""
+                        } catch (_: Exception) { "" }
+
+                        emails.add(Email(
+                            uid = msg.messageNumber.toLong(),
+                            from = msg.from?.firstOrNull()?.toString() ?: "",
+                            subject = msg.subject ?: "(无主题)",
+                            bodyPlain = body,
+                            bodyHtml = "",
+                            receivedDate = msg.receivedDate?.time ?: msg.sentDate?.time ?: 0L,
+                            isRead = msg.flags.contains(Flags.Flag.SEEN),
+                            hasAttachments = false
+                        ))
+                    } catch (_: Exception) {}
+                }
+                return emails
+            }
         }
-        return emails
     }
 }
