@@ -22,8 +22,8 @@ android {
         applicationId = "com.trademail.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 34
-        versionName = "1.0.34"
+        versionCode = 35
+        versionName = "1.0.35"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
@@ -44,20 +44,6 @@ android {
         jvmTarget = "17"
     }
 
-    packaging {
-        resources {
-            excludes += setOf(
-                "META-INF/versions/9/OSGI-INF/MANIFEST.MF",
-                "META-INF/versions/9/module-info.class",
-                "META-INF/versions/**",
-                "META-INF/DEPENDENCIES",
-                "META-INF/LICENSE",
-                "META-INF/LICENSE.txt",
-                "META-INF/NOTICE",
-                "META-INF/NOTICE.txt"
-            )
-        }
-    }
 
     buildFeatures {
         compose = true
@@ -85,8 +71,6 @@ dependencies {
     // Jakarta Mail (IMAP/SMTP)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
-    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
-    implementation("org.bouncycastle:bctls-jdk18on:1.78.1")
 
     // ONNX Runtime (Hy-MT 离线翻译)
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
