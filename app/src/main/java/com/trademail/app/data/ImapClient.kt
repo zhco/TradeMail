@@ -20,7 +20,10 @@ class ImapClient {
         init {
             try {
                 Security.removeProvider("BC")
-                Security.insertProviderAt(BouncyCastleProvider(), 1)
+                val bcProvider = BouncyCastleProvider()
+                Security.insertProviderAt(bcProvider, 1)
+                val bcJsseProvider = org.bouncycastle.jsse.provider.BouncyCastleJsseProvider()
+                Security.insertProviderAt(bcJsseProvider, 2)
             } catch (_: Exception) {}
         }
     }
@@ -118,7 +121,7 @@ class ImapClient {
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
         // Use Bouncy Castle TLS ("BC" provider) — same TLS engine as Nodemailer (OpenSSL-style)
-        val sslCtx = SSLContext.getInstance("TLS", "BC")
+        val sslCtx = SSLContext.getInstance("TLS", "BCJSSE")
         sslCtx.init(null, null, null)
         val socket = sslCtx.socketFactory.createSocket() as SSLSocket
         socket.enabledProtocols = arrayOf("TLSv1.2")
