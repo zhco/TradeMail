@@ -22,8 +22,8 @@ android {
         applicationId = "com.trademail.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 32
-        versionName = "1.0.32"
+        versionCode = 34
+        versionName = "1.0.34"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
