@@ -22,8 +22,8 @@ android {
         applicationId = "com.trademail.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 35
-        versionName = "1.0.35"
+        versionCode = 36
+        versionName = "1.0.36"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
@@ -69,6 +69,7 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.8.5")
 
     // Jakarta Mail (IMAP/SMTP)
+    implementation("com.sun.mail:jakarta.mail:2.0.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
 
@@ -76,6 +77,7 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 
     // OkHttp (模型下载)
+    implementation("com.sun.mail:jakarta.mail:2.0.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // DataStore (账户配置持久化)
