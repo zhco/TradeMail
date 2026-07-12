@@ -51,11 +51,11 @@ class ImapClient {
                 if (start > end) return emptyList()
 
                 val msgs = f.getMessages(start, end)
-                f.fetch(msgs, arrayOf(
-                    FetchProfile.Item.FLAGS,
-                    FetchProfile.Item.ENVELOPE,
-                    FetchProfile.Item.CONTENT_INFO
-                ))
+                val fp = FetchProfile()
+                fp.add(FetchProfile.Item.FLAGS)
+                fp.add(FetchProfile.Item.ENVELOPE)
+                fp.add(FetchProfile.Item.CONTENT_INFO)
+                f.fetch(msgs, fp)
 
                 val emails = mutableListOf<Email>()
                 for (msg in msgs.reversed()) {
