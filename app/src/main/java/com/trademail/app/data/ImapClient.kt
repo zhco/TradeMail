@@ -12,6 +12,12 @@ import java.util.*
 
 class ImapClient {
 
+    companion object {
+        init {
+            System.setProperty("mail.imaps.class", "com.sun.mail.imap.IMAPSSLStore")
+        }
+    }
+
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
         withContext(Dispatchers.IO) {
             try {
@@ -25,14 +31,16 @@ class ImapClient {
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
         val props = Properties().apply {
-            put("mail.imap.ssl.enable", "true")
-            put("mail.imap.host", account.imapHost)
-            put("mail.imap.port", "993")
-            put("mail.imap.connectiontimeout", "15000")
-            put("mail.imap.timeout", "30000")
-            put("mail.imap.socketFactory.class", "javax.net.ssl.SSLSocketFactory")
-            put("mail.imap.socketFactory.fallback", "false")
-            put("mail.imap.socketFactory.port", "993")
+            put("mail.store.protocol", "imaps")
+            put("mail.imaps.class", "com.sun.mail.imap.IMAPSSLStore")
+            put("mail.imaps.ssl.enable", "true")
+            put("mail.imaps.host", account.imapHost)
+            put("mail.imaps.port", "993")
+            put("mail.imaps.connectiontimeout", "15000")
+            put("mail.imaps.timeout", "30000")
+            put("mail.imaps.socketFactory.class", "javax.net.ssl.SSLSocketFactory")
+            put("mail.imaps.socketFactory.fallback", "false")
+            put("mail.imaps.socketFactory.port", "993")
         }
 
         val session = Session.getInstance(props, null)
