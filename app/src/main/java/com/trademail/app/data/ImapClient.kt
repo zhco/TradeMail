@@ -32,8 +32,7 @@ class ImapClient {
     private fun sendCmd(output: OutputStream, cmd: String, state: ImapState) {
         val tag = "A${state.tagIndex}"
         state.tagIndex++
-        output.write("$tag $cmd
-".toByteArray(Charsets.UTF_8))
+        output.write("$tag $cmd\r\n".toByteArray(Charsets.UTF_8))
         output.flush()
     }
 
