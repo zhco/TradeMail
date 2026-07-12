@@ -22,8 +22,7 @@ class ImapClient {
             val b = input.read()
             if (b < 0) break
             bytes.write(b)
-            if (prev == ''.code && b == '
-'.code) break
+            if (prev == '\r'.code && b == '\n'.code) break
             prev = b
         }
         return String(bytes.toByteArray(), Charsets.UTF_8).trim()
