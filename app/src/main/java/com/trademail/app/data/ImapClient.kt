@@ -31,11 +31,9 @@ class ImapClient {
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
         val props = Properties().apply {
-            put("mail.store.protocol", "imaps")
-            put("mail.imaps.class", "com.sun.mail.imap.IMAPSSLStore")
-            put("mail.imaps.ssl.enable", "true")
             put("mail.imaps.host", account.imapHost)
             put("mail.imaps.port", "993")
+            put("mail.imaps.ssl.enable", "true")
             put("mail.imaps.connectiontimeout", "15000")
             put("mail.imaps.timeout", "30000")
             put("mail.imaps.socketFactory.class", "javax.net.ssl.SSLSocketFactory")
@@ -46,8 +44,8 @@ class ImapClient {
         val session = Session.getInstance(props, null)
         session.debug = false
 
-        val store = session.getStore("imaps")
-        store.connect(account.email, account.password)
+        val store = com.sun.mail.imap.IMAPSSLStore(session, null)
+        store.connect(account.imapHost, 993, account.email, account.password)
         store.use { s ->
             val inbox = s.getFolder("INBOX").apply { open(Folder.READ_ONLY) }
             inbox.use { f ->
