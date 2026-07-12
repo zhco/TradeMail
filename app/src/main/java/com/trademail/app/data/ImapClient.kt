@@ -33,6 +33,7 @@ class ImapClient {
         val props = Properties().apply {
             put("mail.imaps.host", account.imapHost)
             put("mail.imaps.port", "993")
+            put("mail.imaps.auth.mechanisms", "LOGIN PLAIN")
             put("mail.imaps.ssl.enable", "true")
             put("mail.imaps.connectiontimeout", "15000")
             put("mail.imaps.timeout", "30000")
