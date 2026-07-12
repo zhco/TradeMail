@@ -22,8 +22,8 @@ android {
         applicationId = "com.trademail.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 36
-        versionName = "1.0.36"
+        versionCode = 38
+        versionName = "1.0.38"
         ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
@@ -44,6 +44,13 @@ android {
         jvmTarget = "17"
     }
 
+
+
+    packaging {
+        resources {
+            excludes += "/META-INF/{NOTICE.md,NOTICE,LICENSE,LICENSE.txt,DEPENDENCIES,AL2.0,LGPL2.1}"
+        }
+    }
 
     buildFeatures {
         compose = true
