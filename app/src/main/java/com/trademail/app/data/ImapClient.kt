@@ -78,7 +78,8 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        val sslContext = javax.net.ssl.SSLContext.getInstance("TLSv1.2")
+        // Use Google Conscrypt for modern TLS (X25519 support)
+        val sslContext = javax.net.ssl.SSLContext.getInstance("TLSv1.2", org.conscrypt.Conscrypt.newProvider())
         sslContext.init(null, null, null)
         val socket = sslContext.socketFactory.createSocket(account.imapHost, 993) as SSLSocket
         socket.soTimeout = 30000
