@@ -9,7 +9,6 @@ import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.*
 import javax.net.ssl.SSLSocket
-import javax.net.ssl.SSLSocketFactory
 
 class ImapClient {
 
@@ -79,9 +78,21 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
-        val socket = factory.createSocket(account.imapHost, 993) as SSLSocket
-        socket.enabledProtocols = arrayOf("TLSv1.2")
+        val sslContext = javax.net.ssl.SSLContext.getInstance("TLSv1.2")
+        sslContext.init(null, null, null)
+        val socket = sslContext.socketFactory.createSocket(account.imapHost, 993) as SSLSocket
+        socket.enabledCipherSuites = arrayOf(
+            "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+            "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+            "TLS_RSA_WITH_AES_256_GCM_SHA384",
+            "TLS_RSA_WITH_AES_128_GCM_SHA256",
+            "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384",
+            "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256",
+            "TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA",
+            "TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA",
+            "TLS_RSA_WITH_AES_256_CBC_SHA",
+            "TLS_RSA_WITH_AES_128_CBC_SHA"
+        )
         socket.soTimeout = 30000
         socket.tcpNoDelay = true
         socket.startHandshake()
