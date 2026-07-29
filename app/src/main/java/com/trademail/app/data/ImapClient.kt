@@ -9,6 +9,7 @@ import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.*
 import org.conscrypt.Conscrypt
+import java.net.InetSocketAddress
 import javax.net.ssl.SSLSocket
 
 class ImapClient {
@@ -82,9 +83,11 @@ class ImapClient {
         val provider = Conscrypt.newProvider()
         val sslContext = javax.net.ssl.SSLContext.getInstance("TLSv1.2", provider)
         sslContext.init(null, null, null)
-        val socket = sslContext.socketFactory.createSocket(account.imapHost, 993) as SSLSocket
+        val plainSocket = java.net.Socket()
+        plainSocket.tcpNoDelay = true
+        plainSocket.connect(InetSocketAddress(account.imapHost, 993), 15000)
+        val socket = sslContext.socketFactory.createSocket(plainSocket, account.imapHost, 993, true) as SSLSocket
         socket.soTimeout = 30000
-        socket.tcpNoDelay = true
         socket.startHandshake()
 
         val input = socket.inputStream
