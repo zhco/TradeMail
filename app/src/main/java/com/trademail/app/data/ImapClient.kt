@@ -8,8 +8,6 @@ import java.io.*
 import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.*
-import org.conscrypt.Conscrypt
-import java.security.Security
 import javax.net.ssl.SSLSocket
 
 class ImapClient {
@@ -80,8 +78,6 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        // Use Google Conscrypt for modern TLS (X25519 support)
-        Security.insertProviderAt(Conscrypt.newProvider(), 1)
         val sslContext = javax.net.ssl.SSLContext.getInstance("TLSv1.2")
         sslContext.init(null, null, null)
         val socket = sslContext.socketFactory.createSocket(account.imapHost, 993) as SSLSocket
