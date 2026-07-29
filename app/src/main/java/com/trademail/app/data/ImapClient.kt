@@ -8,6 +8,7 @@ import java.io.*
 import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.*
+import org.conscrypt.Conscrypt
 import javax.net.ssl.SSLSocket
 
 class ImapClient {
@@ -78,7 +79,8 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        val sslContext = javax.net.ssl.SSLContext.getInstance("TLSv1.2")
+        val provider = Conscrypt.newProvider()
+        val sslContext = javax.net.ssl.SSLContext.getInstance("TLSv1.2", provider)
         sslContext.init(null, null, null)
         val socket = sslContext.socketFactory.createSocket(account.imapHost, 993) as SSLSocket
         socket.soTimeout = 30000
