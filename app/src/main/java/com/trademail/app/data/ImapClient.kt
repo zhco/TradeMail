@@ -8,8 +8,9 @@ import java.io.*
 import java.nio.charset.Charset
 import java.text.SimpleDateFormat
 import java.util.*
-import android.net.SSLCertificateSocketFactory
+import java.net.Socket
 import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 
 class ImapClient {
 
@@ -79,10 +80,30 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
-        val socket = SSLCertificateSocketFactory.getDefault(15000, null)
-            .createSocket(account.imapHost, 993) as SSLSocket
+        // Connect via STARTTLS on port 143 to avoid Conscrypt direct-TLS issues
+        val plainSocket = Socket(account.imapHost, 143)
+        plainSocket.soTimeout = 15000
+        plainSocket.tcpNoDelay = true
+        val plainInput = plainSocket.inputStream
+        val plainOutput = plainSocket.outputStream
+
+        // Read greeting
+        val greeting = ByteArray(256)
+        val greetingLen = plainInput.read(greeting)
+        if (greetingLen < 0) throw java.io.IOException("No greeting on port 143")
+
+        // Send STARTTLS
+        plainOutput.write("A0 STARTTLS
+".toByteArray(Charsets.UTF_8))
+        plainOutput.flush()
+        val starttlsResp = ByteArray(256)
+        val starttlsLen = plainInput.read(starttlsResp)
+        if (starttlsLen < 0 || !String(starttlsResp, 0, starttlsLen).contains("OK"))
+            throw java.io.IOException("STARTTLS rejected")
+
+        // Upgrade to TLS
+        val socket = SSLSocketFactory.getDefault().createSocket(plainSocket, account.imapHost, 143, true) as SSLSocket
         socket.soTimeout = 30000
-        socket.tcpNoDelay = true
         socket.startHandshake()
 
         val input = socket.inputStream
