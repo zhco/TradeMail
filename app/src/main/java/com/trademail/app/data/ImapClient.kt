@@ -11,6 +11,8 @@ import java.util.*
 import java.net.Socket
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
+import com.trademail.app.util.NetworkDiagnostics
+import android.util.Log
 
 class ImapClient {
 
@@ -80,6 +82,7 @@ class ImapClient {
         }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
+        try { val d=NetworkDiagnostics.runAll(account.imapHost); Log.e("TM","DIAG "+d.joinToString(" | "){"["+it.test+"]"+it.success+":"+it.detail}) } catch(_:Exception){}
         // Connect via STARTTLS on port 143 to avoid Conscrypt direct-TLS issues
         val plainSocket = Socket(account.imapHost, 143)
         plainSocket.soTimeout = 15000
