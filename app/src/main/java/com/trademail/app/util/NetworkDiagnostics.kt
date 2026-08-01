@@ -2,6 +2,7 @@ package com.trademail.app.util
 
 import java.io.*
 import java.net.Socket
+import java.nio.charset.StandardCharsets
 
 object NetworkDiagnostics {
     data class DiagResult(
@@ -36,7 +37,7 @@ object NetworkDiagnostics {
             s.close()
             if (len > 0) {
                 val hex = buf.copyOf(len).joinToString(" ") { "%02x".format(it) }
-                val txt = String(buf, 0, minOf(len, 200), Charsets.UTF_8)
+                val txt = String(buf, 0, minOf(len, 200), java.nio.charset.StandardCharsets.UTF_8)
                     .replace("\r", "\\r").replace("\n", "\\n")
                 DiagResult(label, true, "got ${len}B. hex: $hex | text: $txt")
             } else {
