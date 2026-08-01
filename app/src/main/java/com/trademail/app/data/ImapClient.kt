@@ -104,7 +104,7 @@ class ImapClient {
             throw java.io.IOException("STARTTLS rejected")
 
         // Upgrade to TLS
-        val socket = SSLSocketFactory.getDefault().createSocket(plainSocket, account.imapHost, 143, true) as SSLSocket
+        val socket = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(plainSocket, account.imapHost, 143, true) as SSLSocket
         socket.soTimeout = 30000
         socket.startHandshake()
 
