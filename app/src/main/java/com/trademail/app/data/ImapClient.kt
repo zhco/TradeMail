@@ -96,8 +96,7 @@ class ImapClient {
         if (greetingLen < 0) throw java.io.IOException("No greeting on port 143")
 
         // Send STARTTLS
-        plainOutput.write("A0 STARTTLS
-".toByteArray(Charsets.UTF_8))
+        plainOutput.write(byteArrayOf(0x41,0x30,0x20,0x53,0x54,0x41,0x52,0x54,0x54,0x4c,0x53,0x0d,0x0a))
         plainOutput.flush()
         val starttlsResp = ByteArray(256)
         val starttlsLen = plainInput.read(starttlsResp)
