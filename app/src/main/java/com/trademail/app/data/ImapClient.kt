@@ -117,6 +117,7 @@ class ImapClient {
 
         // Upgrade to TLS
         val socket = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(plainSocket, account.imapHost, 143, true) as SSLSocket
+        socket.enabledProtocols = arrayOf("TLSv1.2")
         socket.soTimeout = 30000
         socket.startHandshake()
 
