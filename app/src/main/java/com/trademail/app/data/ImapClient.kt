@@ -3,6 +3,7 @@ package com.trademail.app.data
 import com.trademail.app.model.Account
 import com.trademail.app.model.Email
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.*
 import java.nio.charset.Charset
@@ -91,9 +92,12 @@ class ImapClient {
 
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
         withContext(Dispatchers.IO) {
-            try { Result.success(fetch(account, page, pageSize)) }
-            catch (e: Exception) {
-                val sw = StringWriter(); e.printStackTrace(PrintWriter(sw))
+            var last: Exception? = null
+            for (i in 0..2) {
+                try { return@withContext Result.success(fetch(account, page, pageSize)) }
+                catch (ex: Exception) { last = ex; if (i < 2) delay((i+1)*2000L) }
+            }
+            val sw = StringWriter(); last!!.printStackTrace(PrintWriter(sw))
                 Result.failure(RuntimeException(buildDiagStr(account.imapHost) + "\n" + e.javaClass.simpleName + ": " + e.message + "\n" + sw.toString().take(400)))
             }
         }
