@@ -88,6 +88,8 @@ dependencies {
     // DataStore (账户配置持久化)
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("org.conscrypt:conscrypt-android:2.5.2")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    implementation("org.bouncycastle:bctls-jdk18on:1.78.1")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
