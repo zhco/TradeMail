@@ -72,6 +72,14 @@ class ImapClient {
     private fun parseDate(s: String): Long { for (f in dateFormats) { try { return f.parse(s.trim())?.time ?: 0L } catch (_: Exception) {} }; return 0L }
     private fun findHdr(h: String, n: String): String = Regex("""$n:\s*(.+)""", RegexOption.IGNORE_CASE).find(h)?.groupValues?.get(1)?.trim() ?: ""
 
+        private fun buildDiagStr(host: String): String {
+        return try {
+            val d = NetworkDiagnostics.runAll(host)
+            d.joinToString("
+") { "[" + it.test + "] " + it.success + ": " + it.detail }
+        } catch (e: Exception) { "diag failed: " + e.message }
+    }
+
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
         withContext(Dispatchers.IO) {
             try { Result.success(fetch(account, page, pageSize)) }
