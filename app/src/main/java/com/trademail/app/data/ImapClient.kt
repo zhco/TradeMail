@@ -13,8 +13,13 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 import com.trademail.app.util.NetworkDiagnostics
 import android.util.Log
+import java.security.Security
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 
 class ImapClient {
+    init {
+        Security.insertProviderAt(BouncyCastleProvider(), 1)
+    }
 
     data class ImapState(var tagIndex: Int = 0)
 
@@ -116,8 +121,9 @@ class ImapClient {
             throw java.io.IOException("STARTTLS rejected")
 
         // Upgrade to TLS
-        val socket = (SSLSocketFactory.getDefault() as SSLSocketFactory).createSocket(plainSocket, account.imapHost, 143, true) as SSLSocket
-        socket.enabledProtocols = arrayOf("TLSv1.2")
+        val sslCtx = javax.net.ssl.SSLContext.getInstance("TLSv1.2", "BCJSSE")
+        sslCtx.init(null, null, null)
+        val socket = sslCtx.socketFactory.createSocket(plainSocket, account.imapHost, 143, true) as SSLSocket
         socket.soTimeout = 30000
         socket.startHandshake()
 
