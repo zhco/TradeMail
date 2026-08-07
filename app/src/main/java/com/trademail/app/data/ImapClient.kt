@@ -89,7 +89,7 @@ class ImapClient {
             try { Result.success(fetch(account, page, pageSize)) }
             catch (e: Exception) {
                 val sw = StringWriter(); e.printStackTrace(PrintWriter(sw))
-                Result.failure(RuntimeException("${e.javaClass.simpleName}: ${e.message}\n${sw.toString().take(800)}"))
+                Result.failure(RuntimeException(buildDiagStr(account.imapHost) + "\n" + e.javaClass.simpleName + ": " + e.message + "\n" + sw.toString().take(400)))
             }
         }
 
