@@ -74,10 +74,14 @@ class ImapClient {
 
         private fun buildDiagStr(host: String): String {
         return try {
-            val d = NetworkDiagnostics.runAll(host)
-            d.joinToString("
-") { "[" + it.test + "] " + it.success + ": " + it.detail }
-        } catch (e: Exception) { "diag failed: " + e.message }
+            val sb = StringBuilder()
+            for (r in NetworkDiagnostics.runAll(host)) {
+                sb.append('[').append(r.test).append(']')
+                sb.append(if (r.success) 'Y' else 'N')
+                sb.append(':').append(r.detail).append('|')
+            }
+            sb.toString()
+        } catch (e: Exception) { "diag:" + e.message }
     }
 
     suspend fun fetchInbox(account: Account, page: Int = 0, pageSize: Int = 20): Result<List<Email>> =
