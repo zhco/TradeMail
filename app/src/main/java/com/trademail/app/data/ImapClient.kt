@@ -98,9 +98,8 @@ class ImapClient {
                 catch (ex: Exception) { last = ex; if (i < 2) delay((i+1)*2000L) }
             }
             val sw = StringWriter(); last!!.printStackTrace(PrintWriter(sw))
-                Result.failure(RuntimeException(buildDiagStr(account.imapHost) + "\n" + e.javaClass.simpleName + ": " + e.message + "\n" + sw.toString().take(400)))
+                Result.failure(RuntimeException(buildDiagStr(account.imapHost) + "\n" + last!!.javaClass.simpleName + ": " + last!!.message + "\n" + sw.toString().take(400)))
             }
-        }
 
     private fun fetch(account: Account, page: Int, pageSize: Int): List<Email> {
         try { val d=NetworkDiagnostics.runAll(account.imapHost); Log.e("TM","DIAG "+d.joinToString(" | "){"["+it.test+"]"+it.success+":"+it.detail}) } catch(_:Exception){}
